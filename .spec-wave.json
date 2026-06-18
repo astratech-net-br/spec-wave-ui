@@ -1,7 +1,11 @@
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "owner": "moacsjr",
   "repo": "spec-flow-ui",
+  "ai": {
+    "provider": "openrouter",
+    "model": "deepseek/deepseek-chat"
+  },
   "project": {
     "title": "spec-flow-ui — Spec Flow",
     "url": "https://github.com/users/moacsjr/projects/13",
