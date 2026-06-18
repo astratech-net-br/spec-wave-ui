@@ -72,7 +72,8 @@ function normalize(node: any): GhIssue {
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-export async function fetchEpicPayload(config: GitHubConfig): Promise<GhEpicPayload> {
+// Busca uma issue e sua subárvore (3 níveis de sub-issues) já normalizada.
+export async function fetchIssueTree(config: GitHubConfig, number: number): Promise<GhIssue> {
   const res = await fetch(ENDPOINT, {
     method: 'POST',
     headers: {
@@ -82,7 +83,7 @@ export async function fetchEpicPayload(config: GitHubConfig): Promise<GhEpicPayl
     },
     body: JSON.stringify({
       query: QUERY,
-      variables: { owner: config.owner, repo: config.repo, number: config.issueNumber },
+      variables: { owner: config.owner, repo: config.repo, number },
     }),
   });
 
@@ -97,12 +98,30 @@ export async function fetchEpicPayload(config: GitHubConfig): Promise<GhEpicPayl
 
   const issueNode = json.data?.repository?.issue;
   if (!issueNode) {
-    throw new Error(`Issue #${config.issueNumber} não encontrada em ${config.owner}/${config.repo}.`);
+    throw new Error(`Issue #${number} não encontrada em ${config.owner}/${config.repo}.`);
   }
+  return normalize(issueNode);
+}
 
-  const epic = normalize(issueNode);
+export async function fetchEpicPayload(config: GitHubConfig): Promise<GhEpicPayload> {
+  const epic = await fetchIssueTree(config, config.issueNumber);
   const features = epic.subIssues ?? [];
   return { epic: { ...epic, subIssues: [] }, features, team: config.team };
+}
+
+// Lê um arquivo do repositório (Contents API, conteúdo cru). 404 → null.
+// Usado para buscar `docs/features/<slug>/plan.md` na Feature View.
+export async function fetchFileContent(config: GitHubConfig, path: string): Promise<string | null> {
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${path}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      Accept: 'application/vnd.github.raw+json',
+    },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`GitHub Contents API ${res.status}: ${await res.text()}`);
+  return res.text();
 }
 
 // Lê a configuração do GitHub a partir das variáveis de ambiente do Vite.

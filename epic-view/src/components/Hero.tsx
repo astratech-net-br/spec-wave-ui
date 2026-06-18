@@ -1,60 +1,66 @@
-import type { Epic } from '../types';
+import type { MetaField, WorkItemView } from '../types';
 import { Avatar } from './Avatar';
 import { ProgressPanel } from './ProgressPanel';
 
 interface HeroProps {
-  epic: Epic;
+  view: WorkItemView;
 }
 
-interface MetaProps {
-  label: string;
-  children: React.ReactNode;
+function MetaValue({ field }: { field: MetaField }) {
+  if (field.kind === 'priority') {
+    return (
+      <>
+        <span className="meta__caret" aria-hidden="true">
+          ▲
+        </span>
+        {field.value}
+      </>
+    );
+  }
+  if (field.kind === 'person' && field.person) {
+    return (
+      <>
+        <Avatar
+          initials={field.person.initials}
+          color={field.person.avatarColor}
+          size={20}
+          title={field.person.name}
+        />
+        {field.person.name}
+      </>
+    );
+  }
+  return <>{field.value}</>;
 }
 
-function Meta({ label, children }: MetaProps) {
-  return (
-    <div className="meta">
-      <span className="meta__label">{label}</span>
-      <span className="meta__value">{children}</span>
-    </div>
-  );
-}
-
-export function Hero({ epic }: HeroProps) {
+export function Hero({ view }: HeroProps) {
   return (
     <section className="hero">
       <div className="hero__identity">
         <div className="hero__toprow">
-          {/* Badge de status do épico: sempre estilo "prog" (accent) — RFC seção 5. */}
+          {/* Badge de status: sempre estilo "prog" (accent) — RFC seção 5. */}
           <span className="pill">
             <span className="pill__dot" />
-            {epic.status}
+            {view.status}
           </span>
-          <span className="code">{epic.code}</span>
+          <span className="code">{view.code}</span>
         </div>
 
-        <h1 className="hero__title">{epic.title}</h1>
+        <h1 className="hero__title">{view.title}</h1>
 
         <div className="meta-row">
-          <Meta label="Prioridade">
-            <span className="meta__caret" aria-hidden="true">▲</span>
-            {epic.priority}
-          </Meta>
-          <Meta label="Prazo">{epic.dates}</Meta>
-          <Meta label="Responsável">
-            <Avatar
-              initials={epic.owner.initials}
-              color={epic.owner.avatarColor}
-              size={20}
-              title={epic.owner.name}
-            />
-            {epic.owner.name}
-          </Meta>
-          <Meta label="Time">{epic.team}</Meta>
+          {view.meta.map((field) => (
+            <div className="meta" key={field.label}>
+              <span className="meta__label">{field.label}</span>
+              <span className="meta__value">
+                <MetaValue field={field} />
+              </span>
+            </div>
+          ))}
         </div>
       </div>
 
-      <ProgressPanel features={epic.features} />
+      <ProgressPanel pct={view.headerPct} items={view.children} label={view.progressLabel} />
     </section>
   );
 }

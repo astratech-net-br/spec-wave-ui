@@ -1,14 +1,15 @@
-import type { Feature } from '../types';
-import { STATUS_MAP, epicPct, legendCounts } from '../lib/status';
+import type { ChildItem } from '../types';
+import { STATUS_MAP, legendCounts } from '../lib/status';
 import { ProgressBar } from './ProgressBar';
 
 interface ProgressPanelProps {
-  features: Feature[];
+  pct: number; // % grande (cabeçalho); calculado pelo adapter conforme o nível
+  items: ChildItem[]; // filhos, para a legenda
+  label: string; // "Progresso do épico" / "da feature" / "da story"
 }
 
-export function ProgressPanel({ features }: ProgressPanelProps) {
-  const pct = epicPct(features);
-  const legend = legendCounts(features);
+export function ProgressPanel({ pct, items, label }: ProgressPanelProps) {
+  const legend = legendCounts(items);
 
   const rows = [
     { key: 'done' as const, label: 'Concluídas', count: legend.done },
@@ -19,11 +20,11 @@ export function ProgressPanel({ features }: ProgressPanelProps) {
   return (
     <aside className="progress-panel">
       <div className="progress-panel__head">
-        <span className="progress-panel__label">Progresso do épico</span>
+        <span className="progress-panel__label">{label}</span>
         <span className="progress-panel__pct">{pct}%</span>
       </div>
 
-      <ProgressBar pct={pct} label={`Progresso do épico: ${pct}%`} />
+      <ProgressBar pct={pct} label={`${label}: ${pct}%`} />
 
       <div className="legend">
         {rows.map((row) => (

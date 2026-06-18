@@ -1,10 +1,12 @@
-// Adapter: traduz issues do GitHub (forma crua) → modelo de domínio Epic/Feature.
-// Toda a lógica de mapeamento RFC-001 → Epic View vive aqui.
+// Adapter: traduz issues do GitHub (forma crua) → WorkItemView (modelo das telas).
+// A hierarquia RFC-001 é uniforme, então os três níveis reusam os mesmos helpers;
+// só o conjunto de metadados, os rótulos e o tipo de filho (com/sem barra) variam.
 
-import type { Epic, Feature, Person } from '../types';
+import type { ChildItem, Crumb, Level, MetaField, Person, WorkItemView } from '../types';
 import { avatarColor, initials } from '../lib/avatar';
-import { statusFromPct } from '../lib/status';
+import { STATUS_MAP, meanPct, statusFromPct } from '../lib/status';
 import { dateRange } from '../lib/date';
+import { hrefFor } from '../lib/router';
 import type { GhEpicPayload, GhIssue, GhUser } from './types';
 
 // Labels de tipo do RFC (config.mjs do spec-flow).
@@ -38,6 +40,14 @@ function priorityOf(issue: GhIssue): string {
   return p ? PRIORITY_TEXT[p] : '—';
 }
 
+function areaOf(issue: GhIssue): string {
+  return labelNames(issue).find((n) => AREA_NAMES.has(n)) || '—';
+}
+
+function releaseOf(issue: GhIssue): string {
+  return labelNames(issue).find((n) => /^v\d/.test(n)) || '—';
+}
+
 function personFrom(user: GhUser | undefined, fallbackSeed: string): Person {
   const display = user?.name || user?.login || '';
   const seed = user?.login || display || fallbackSeed;
@@ -48,8 +58,8 @@ function personFrom(user: GhUser | undefined, fallbackSeed: string): Person {
   };
 }
 
-// Conta recursivamente as Tasks (folhas) sob uma Feature e quantas estão fechadas.
-// Se a Feature não tiver sub-issues, ela própria conta como 1 task.
+// Conta recursivamente as Tasks (folhas) sob um item e quantas estão fechadas.
+// Se o item não tiver sub-issues, ele próprio conta como 1 task.
 function countTasks(issue: GhIssue): { done: number; total: number } {
   const children = issue.subIssues || [];
   if (children.length === 0) {
@@ -66,6 +76,10 @@ function countTasks(issue: GhIssue): { done: number; total: number } {
   );
 }
 
+function pctFrom({ done, total }: { done: number; total: number }): number {
+  return total > 0 ? Math.round((done / total) * 100) : 0;
+}
+
 // Tags exibidas no card: Area + Release (RFC seção 10), na ordem encontrada.
 function tagsOf(issue: GhIssue): string[] {
   const names = labelNames(issue);
@@ -78,65 +92,186 @@ function tagsOf(issue: GhIssue): string[] {
   return tags;
 }
 
-function toFeature(issue: GhIssue): Feature {
-  const { done, total } = countTasks(issue);
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-  const assignee = personFrom(issue.assignees?.[0], `feat-${issue.number}`);
-  return {
+// Mapeia uma sub-issue para card. `leaf` → Task (binária, sem barra/contagem);
+// caso contrário Feature/Story com progresso derivado das Tasks descendentes.
+// `childLevel`, quando informado, gera o link de drill-down.
+function toChild(issue: GhIssue, opts: { leaf?: boolean; childLevel?: Level } = {}): ChildItem {
+  const assignee = personFrom(issue.assignees?.[0], `item-${issue.number}`);
+  const base = {
     name: stripTypePrefix(issue.title),
-    status: statusFromPct(pct),
-    pct,
-    doneTasks: done,
-    totalTasks: total,
     tags: tagsOf(issue),
     assignee: { initials: assignee.initials, avatarColor: assignee.avatarColor },
+    href: opts.childLevel ? hrefFor(opts.childLevel, issue.number) : undefined,
   };
+
+  if (opts.leaf) {
+    const pct = isClosed(issue) ? 100 : 0;
+    return { ...base, status: statusFromPct(pct), pct, doneTasks: 0, totalTasks: 0, leaf: true };
+  }
+
+  const { done, total } = countTasks(issue);
+  const pct = pctFrom({ done, total });
+  return { ...base, status: statusFromPct(pct), pct, doneTasks: done, totalTasks: total, leaf: false };
 }
 
-// Time: label `team:*` → milestone → fallback informado no payload.
-function teamOf(epic: GhIssue, payloadTeam?: string): string {
-  const teamLabel = labelNames(epic).find((n) => n.startsWith('team:'));
+// Time: label `team:*` → milestone → fallback informado.
+function teamOf(issue: GhIssue, fallbackTeam?: string): string {
+  const teamLabel = labelNames(issue).find((n) => n.startsWith('team:'));
   if (teamLabel) return teamLabel.slice(5).trim();
-  if (payloadTeam) return payloadTeam;
-  if (epic.milestone?.title) return epic.milestone.title;
+  if (fallbackTeam) return fallbackTeam;
+  if (issue.milestone?.title) return issue.milestone.title;
   return '—';
 }
 
-// Código no estilo "CHK-204": acrônimo do time (3 letras) + número da issue.
-function codeOf(epic: GhIssue, team: string): string {
+// Acrônimo do time (3 letras), reusado por Epic/Feature/Story para o mesmo prefixo.
+function teamPrefix(team: string): string {
   const word = team.replace(/squad/i, '').trim() || team;
-  const prefix = (word.replace(/[^a-zA-Z]/g, '').slice(0, 3) || 'EPIC').toUpperCase();
-  return `${prefix}-${epic.number}`;
+  return (word.replace(/[^a-zA-Z]/g, '').slice(0, 3) || 'ITEM').toUpperCase();
 }
 
-// Status do épico no hero: usa o nome da coluna do Project (emoji removido) ou,
-// na ausência, deriva do estado da issue.
+// Código no estilo "CHK-204": prefixo do time + número da issue.
+function codeOf(issue: GhIssue, team: string): string {
+  return `${teamPrefix(team)}-${issue.number}`;
+}
+
+// Status do épico no hero: nome da coluna do Project (emoji removido) ou estado da issue.
 function epicStatusText(epic: GhIssue, status?: string): string {
   if (status) return status.replace(/^[^\p{L}]+/u, '').trim();
   return isClosed(epic) ? 'Concluído' : 'Em andamento';
 }
 
-export interface AdaptOptions {
-  // Nome da coluna de Status do GitHub Project, se disponível (ex.: "🚧 Desenvolvimento").
-  status?: string;
+// Feature/Story não têm coluna de Project — status deriva do próprio progresso.
+function statusTextFromPct(pct: number): string {
+  return STATUS_MAP[statusFromPct(pct)].label;
 }
 
-export function adaptEpic(payload: GhEpicPayload, opts: AdaptOptions = {}): Epic {
+// Extrai o número da issue-pai a partir do corpo (spec-flow escreve
+// "_Story pai: <url>_" / "_Feature pai: <url>_"). Best-effort para o modo live,
+// onde um fetch de issue única não traz o pai pela API de sub-issues.
+function parentFromBody(body: string | undefined): number | null {
+  if (!body) return null;
+  const m = body.match(/(?:pai|parent)[^#\n]*?#(\d+)/i) || body.match(/issues\/(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// Referência a um ancestral para montar o breadcrumb com link de subida.
+export interface ParentRef {
+  level: Level;
+  number: number;
+  code: string;
+}
+
+export interface AdaptContext {
+  team?: string; // fallback de time (config/payload)
+  parent?: ParentRef; // pai direto (feature→epic, story→feature)
+  grandparent?: ParentRef; // avô (story→epic)
+  plan?: string | null; // conteúdo do plan.md (Feature)
+  status?: string; // coluna de Status do Project (Epic)
+}
+
+function crumbFor(ref: ParentRef): Crumb {
+  return { label: ref.code, href: hrefFor(ref.level, ref.number) };
+}
+
+// ----------------------------------------------------------------- Epic
+
+export function adaptEpic(payload: GhEpicPayload, ctx: AdaptContext = {}): WorkItemView {
   const { epic } = payload;
-  const team = teamOf(epic, payload.team);
+  const team = teamOf(epic, ctx.team ?? payload.team);
   const owner = personFrom(epic.assignees?.[0], `epic-${epic.number}`);
+  const children = (payload.features || []).map((f) => toChild(f, { childLevel: 'feature' }));
+
+  const meta: MetaField[] = [
+    { label: 'Prioridade', value: priorityOf(epic), kind: 'priority' },
+    { label: 'Prazo', value: dateRange(epic.createdAt, epic.milestone?.dueOn) },
+    { label: 'Responsável', value: owner.name, kind: 'person', person: owner },
+    { label: 'Time', value: team },
+  ];
 
   return {
+    level: 'epic',
     code: codeOf(epic, team),
     title: stripTypePrefix(epic.title),
-    team,
-    status: epicStatusText(epic, opts.status),
-    priority: priorityOf(epic),
-    dates: dateRange(epic.createdAt, epic.milestone?.dueOn),
+    status: epicStatusText(epic, ctx.status),
     owner,
+    breadcrumb: [{ label: 'Épicos' }, { label: team }, { label: codeOf(epic, team) }],
+    meta,
     descriptionMdx: epic.body || '',
-    features: (payload.features || []).map(toFeature),
+    headerPct: meanPct(children), // regra da RFC: média dos % das features
+    progressLabel: 'Progresso do épico',
+    childrenLabel: 'Features',
+    children,
   };
 }
 
-export { TYPE_LABELS };
+// --------------------------------------------------------------- Feature
+
+export function adaptFeature(issue: GhIssue, ctx: AdaptContext = {}): WorkItemView {
+  const team = teamOf(issue, ctx.team);
+  const owner = personFrom(issue.assignees?.[0], `feat-${issue.number}`);
+  const children = (issue.subIssues || []).map((s) => toChild(s, { childLevel: 'story' }));
+  const pct = pctFrom(countTasks(issue)); // ponderado por tasks: bate com o card na Epic View
+
+  const meta: MetaField[] = [
+    { label: 'Prioridade', value: priorityOf(issue), kind: 'priority' },
+    { label: 'Area', value: areaOf(issue) },
+    { label: 'Release', value: releaseOf(issue) },
+    { label: 'Responsável', value: owner.name, kind: 'person', person: owner },
+  ];
+
+  const breadcrumb: Crumb[] = [{ label: 'Épicos' }];
+  if (ctx.parent) breadcrumb.push(crumbFor(ctx.parent));
+  breadcrumb.push({ label: codeOf(issue, team) });
+
+  return {
+    level: 'feature',
+    code: codeOf(issue, team),
+    title: stripTypePrefix(issue.title),
+    status: statusTextFromPct(pct),
+    owner,
+    breadcrumb,
+    meta,
+    descriptionMdx: issue.body || '',
+    planMdx: ctx.plan ?? null,
+    headerPct: pct,
+    progressLabel: 'Progresso da feature',
+    childrenLabel: 'Stories',
+    children,
+  };
+}
+
+// ----------------------------------------------------------------- Story
+
+export function adaptStory(issue: GhIssue, ctx: AdaptContext = {}): WorkItemView {
+  const team = teamOf(issue, ctx.team);
+  const owner = personFrom(issue.assignees?.[0], `story-${issue.number}`);
+  const children = (issue.subIssues || []).map((t) => toChild(t, { leaf: true }));
+  const pct = pctFrom(countTasks(issue));
+
+  const meta: MetaField[] = [
+    { label: 'Prioridade', value: priorityOf(issue), kind: 'priority' },
+    { label: 'Responsável', value: owner.name, kind: 'person', person: owner },
+  ];
+
+  const breadcrumb: Crumb[] = [{ label: 'Épicos' }];
+  if (ctx.grandparent) breadcrumb.push(crumbFor(ctx.grandparent));
+  if (ctx.parent) breadcrumb.push(crumbFor(ctx.parent));
+  breadcrumb.push({ label: codeOf(issue, team) });
+
+  return {
+    level: 'story',
+    code: codeOf(issue, team),
+    title: stripTypePrefix(issue.title),
+    status: statusTextFromPct(pct),
+    owner,
+    breadcrumb,
+    meta,
+    descriptionMdx: issue.body || '',
+    headerPct: pct,
+    progressLabel: 'Progresso da story',
+    childrenLabel: 'Tasks',
+    children,
+  };
+}
+
+export { TYPE_LABELS, teamOf, codeOf, parentFromBody };

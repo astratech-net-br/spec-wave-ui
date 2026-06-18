@@ -1,8 +1,9 @@
-import type { Epic } from '../types';
+import type { Crumb, Person } from '../types';
 import { Avatar } from './Avatar';
 
 interface TopBarProps {
-  epic: Epic;
+  breadcrumb: Crumb[];
+  owner: Person;
 }
 
 function EditIcon() {
@@ -22,17 +23,28 @@ function CommentIcon() {
   );
 }
 
-export function TopBar({ epic }: TopBarProps) {
+export function TopBar({ breadcrumb, owner }: TopBarProps) {
   return (
     <header className="topbar">
       <div className="topbar__left">
         <span className="brand" aria-hidden="true" />
         <nav className="breadcrumb" aria-label="Navegação">
-          <span className="breadcrumb__seg">Épicos</span>
-          <span className="breadcrumb__sep">/</span>
-          <span className="breadcrumb__seg">{epic.team}</span>
-          <span className="breadcrumb__sep">/</span>
-          <span className="breadcrumb__seg breadcrumb__seg--current">{epic.code}</span>
+          {breadcrumb.map((crumb, i) => (
+            <span key={`${crumb.label}-${i}`} style={{ display: 'contents' }}>
+              {i > 0 && <span className="breadcrumb__sep">/</span>}
+              {crumb.href ? (
+                <a className="breadcrumb__seg" href={crumb.href}>
+                  {crumb.label}
+                </a>
+              ) : (
+                <span
+                  className={`breadcrumb__seg${i === breadcrumb.length - 1 ? ' breadcrumb__seg--current' : ''}`}
+                >
+                  {crumb.label}
+                </span>
+              )}
+            </span>
+          ))}
         </nav>
       </div>
       <div className="topbar__right">
@@ -43,11 +55,11 @@ export function TopBar({ epic }: TopBarProps) {
           <CommentIcon /> Comentar
         </button>
         <Avatar
-          initials={epic.owner.initials}
+          initials={owner.initials}
           color="#3a322b"
           textColor="var(--text-2)"
           size={30}
-          title={epic.owner.name}
+          title={owner.name}
         />
       </div>
     </header>

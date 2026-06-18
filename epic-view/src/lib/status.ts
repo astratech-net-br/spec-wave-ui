@@ -1,4 +1,4 @@
-import type { Feature, Status } from '../types';
+import type { ChildItem, Status } from '../types';
 
 export interface StatusStyle {
   color: string; // CSS var
@@ -13,18 +13,18 @@ export const STATUS_MAP: Record<Status, StatusStyle> = {
   todo: { color: 'var(--todo)', bg: 'var(--todo-bg)', label: 'A fazer' },
 };
 
-// Deriva o status de uma feature a partir do seu percentual.
+// Deriva o status de um item a partir do seu percentual.
 export function statusFromPct(pct: number): Status {
   if (pct >= 100) return 'done';
   if (pct > 0) return 'prog';
   return 'todo';
 }
 
-// epicPct = média simples dos % das features, arredondada (RFC seção 5).
-export function epicPct(features: Feature[]): number {
-  if (features.length === 0) return 0;
-  const sum = features.reduce((acc, f) => acc + f.pct, 0);
-  return Math.round(sum / features.length);
+// Média simples dos % dos filhos, arredondada. Regra do épico (RFC seção 5).
+export function meanPct(items: ChildItem[]): number {
+  if (items.length === 0) return 0;
+  const sum = items.reduce((acc, it) => acc + it.pct, 0);
+  return Math.round(sum / items.length);
 }
 
 export interface Legend {
@@ -33,12 +33,12 @@ export interface Legend {
   todo: number;
 }
 
-// legend = contagens por categoria, derivadas do pct (RFC seção 5).
-export function legendCounts(features: Feature[]): Legend {
-  return features.reduce<Legend>(
-    (acc, f) => {
-      if (f.pct >= 100) acc.done += 1;
-      else if (f.pct > 0) acc.prog += 1;
+// Contagens por categoria, derivadas do pct dos filhos (RFC seção 5).
+export function legendCounts(items: ChildItem[]): Legend {
+  return items.reduce<Legend>(
+    (acc, it) => {
+      if (it.pct >= 100) acc.done += 1;
+      else if (it.pct > 0) acc.prog += 1;
       else acc.todo += 1;
       return acc;
     },

@@ -5,9 +5,9 @@ function Line({ width }: { width: string }) {
   return <div className="skeleton" style={{ height: 13, width, marginBottom: 14 }} />;
 }
 
-export function LoadingState() {
+export function LoadingState({ cards = 4 }: { cards?: number }) {
   return (
-    <div className="page" aria-busy="true" aria-label="Carregando épico">
+    <div className="page" aria-busy="true" aria-label="Carregando">
       <div className="hero" style={{ display: 'block' }}>
         <div className="skeleton" style={{ height: 22, width: 120, marginBottom: 18 }} />
         <div className="skeleton" style={{ height: 34, width: '60%', marginBottom: 22 }} />
@@ -26,7 +26,7 @@ export function LoadingState() {
         </div>
 
         <div className="feature-list">
-          {[0, 1, 2, 3].map((i) => (
+          {Array.from({ length: cards }, (_, i) => (
             <div key={i} className="skeleton skeleton-card" />
           ))}
         </div>

@@ -1,6 +1,11 @@
-// Modelo de dados da Epic View (RFC seção 5).
+// Modelo de domínio das telas (Epic / Feature / Story View).
+// A hierarquia do spec-flow (RFC-001) é uniforme — Epic → Feature → Story → Task —
+// então as três telas compartilham um único modelo: WorkItemView (o item da tela)
+// com uma lista de ChildItem (os filhos exibidos como cards).
 
 export type Status = 'done' | 'prog' | 'todo';
+
+export type Level = 'epic' | 'feature' | 'story';
 
 export interface Person {
   name: string;
@@ -8,7 +13,9 @@ export interface Person {
   avatarColor: string; // CSS var, ex.: 'var(--av-blue)'
 }
 
-export interface Feature {
+// Filho exibido como card no painel direito. Features e Stories têm progresso
+// próprio (barra); Tasks são folhas (leaf) — checkbox/status, sem barra.
+export interface ChildItem {
   name: string;
   status: Status;
   pct: number; // 0–100 (progresso próprio)
@@ -16,16 +23,37 @@ export interface Feature {
   totalTasks: number;
   tags: string[];
   assignee: { initials: string; avatarColor: string };
+  leaf?: boolean; // Task: renderiza checkbox/status, sem barra nem contagem
+  href?: string; // link de drill-down (folhas não têm)
 }
 
-export interface Epic {
-  code: string; // "CHK-204"
+// Campo de metadado do hero. `kind` decide a renderização especial.
+export interface MetaField {
+  label: string;
+  value: string;
+  kind?: 'text' | 'priority' | 'person';
+  person?: Person; // quando kind === 'person'
+}
+
+// Segmento do breadcrumb. Sem href = segmento atual (não clicável).
+export interface Crumb {
+  label: string;
+  href?: string;
+}
+
+// Modelo único renderizado por qualquer uma das três telas.
+export interface WorkItemView {
+  level: Level;
+  code: string; // "CHK-204" / "CHK-210" / "CHK-211"
   title: string;
-  team: string; // "Squad Checkout"
-  status: string; // "Em andamento"
-  priority: string; // "Alta"
-  dates: string; // "12 mai – 30 jun"
+  status: string; // texto da pill do hero
   owner: Person;
-  descriptionMdx: string; // fonte MDX renderizada no painel de descrição
-  features: Feature[];
+  breadcrumb: Crumb[];
+  meta: MetaField[];
+  descriptionMdx: string; // Spec (corpo da issue)
+  planMdx?: string | null; // só Feature; null/undefined = sem aba Plan
+  headerPct: number; // % grande do painel de progresso
+  progressLabel: string; // "Progresso do épico" / "da feature" / "da story"
+  childrenLabel: string; // "Features" | "Stories" | "Tasks"
+  children: ChildItem[];
 }
