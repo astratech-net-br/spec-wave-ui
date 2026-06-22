@@ -765,6 +765,16 @@ button {
   transform: translateY(-1px);
 }
 
+/* Card de repositório clicável (navega para os épicos). */
+.repo-card--link {
+  cursor: pointer;
+}
+
+.repo-card--link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .repo-card__top {
   display: flex;
   align-items: center;

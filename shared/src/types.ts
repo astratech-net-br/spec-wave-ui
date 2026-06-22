@@ -26,6 +26,21 @@ export interface Repository {
   createdAt: string; // ISO 8601
 }
 
+// Resumo de um épico na lista de épicos de um repositório (issues com label
+// [EPIC]). Leve — sem subárvore/progresso. Schema de GET /api/repositories/:id/epics.
+export interface EpicSummary {
+  number: number;
+  title: string;
+  code: string; // ex.: "CHK-204"
+  state: 'open' | 'closed';
+  url: string; // link da issue no GitHub
+}
+
+export interface RepositoryEpics {
+  repository: Repository;
+  epics: EpicSummary[];
+}
+
 export interface Person {
   name: string;
   initials: string;

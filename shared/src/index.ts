@@ -4,6 +4,8 @@ export type {
   Level,
   RouteCoord,
   Repository,
+  EpicSummary,
+  RepositoryEpics,
   Person,
   ChildItem,
   MetaField,

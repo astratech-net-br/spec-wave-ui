@@ -1,9 +1,14 @@
-import type { Crumb, Person } from '@spec-flow/shared';
-import { hrefFor } from '../lib/router';
+import type { Person } from '@spec-flow/shared';
 import { Avatar } from './Avatar';
 
+// Crumb com href já resolvido pela tela (sem href = segmento atual).
+export interface BreadCrumb {
+  label: string;
+  href?: string;
+}
+
 interface TopBarProps {
-  breadcrumb: Crumb[];
+  breadcrumb: BreadCrumb[];
   owner: Person;
 }
 
@@ -30,14 +35,11 @@ export function TopBar({ breadcrumb, owner }: TopBarProps) {
       <div className="topbar__left">
         <span className="brand" aria-hidden="true" />
         <nav className="breadcrumb" aria-label="Navegação">
-          {breadcrumb.map((crumb, i) => {
-            // Coordenada → href de hash-route. Segmento atual não tem `to`.
-            const href = crumb.to ? hrefFor(crumb.to.level, crumb.to.number) : undefined;
-            return (
+          {breadcrumb.map((crumb, i) => (
             <span key={`${crumb.label}-${i}`} style={{ display: 'contents' }}>
               {i > 0 && <span className="breadcrumb__sep">/</span>}
-              {href ? (
-                <a className="breadcrumb__seg" href={href}>
+              {crumb.href ? (
+                <a className="breadcrumb__seg" href={crumb.href}>
                   {crumb.label}
                 </a>
               ) : (
@@ -48,8 +50,7 @@ export function TopBar({ breadcrumb, owner }: TopBarProps) {
                 </span>
               )}
             </span>
-            );
-          })}
+          ))}
         </nav>
       </div>
       <div className="topbar__right">

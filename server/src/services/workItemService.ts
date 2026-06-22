@@ -1,27 +1,38 @@
 // Serviço de work item — orquestra a busca no GitHub + adaptação para
-// WorkItemView. Sempre live (sem fixture): se o GitHub não estiver configurado,
-// lança NotConfiguredError (→ 503). Portado do antigo client/src/data/source.ts.
+// WorkItemView. Sempre live (sem fixture). A identidade do repo vem da config
+// recebida (montada a partir da linha do SQLite); o token vive só no servidor.
 
-import type { Level, WorkItemView } from '@spec-flow/shared';
+import type { EpicSummary, Level, RepositoryEpics, WorkItemView } from '@spec-flow/shared';
 import {
-  configFromEnv,
   fetchEpicPayload,
+  fetchEpicSummaries,
   fetchFileContent,
   fetchIssueTree,
+  type GitHubConfig,
 } from '../github/client.ts';
-import { adaptEpic, adaptFeature, adaptStory, parentFromBody } from '../github/adapter.ts';
+import {
+  adaptEpic,
+  adaptFeature,
+  adaptStory,
+  codeOf,
+  parentFromBody,
+  stripTypePrefix,
+  teamOf,
+} from '../github/adapter.ts';
 import type { AdaptContext } from '../github/adapter.ts';
 import { slugify } from '../lib/slugify.ts';
-import { NotConfiguredError } from '../lib/errors.ts';
+import {
+  configForRepository,
+  getRepositoryOr404,
+  toRepositoryDTO,
+} from './repositoryService.ts';
 
-export async function loadWorkItem(level: Level, number: number): Promise<WorkItemView> {
-  const config = configFromEnv();
-  if (!config) {
-    throw new NotConfiguredError(
-      'Configure GITHUB_TOKEN, GITHUB_REPO e GITHUB_EPIC_ISSUE no servidor.',
-    );
-  }
-
+// Carrega um work item a partir de uma config de repositório já resolvida.
+export async function loadWorkItem(
+  config: GitHubConfig,
+  level: Level,
+  number: number,
+): Promise<WorkItemView> {
   if (level === 'epic') {
     return adaptEpic(await fetchEpicPayload({ ...config, issueNumber: number }), { team: config.team });
   }
@@ -44,4 +55,34 @@ export async function loadWorkItem(level: Level, number: number): Promise<WorkIt
     return adaptFeature(issue, ctx);
   }
   return adaptStory(issue, ctx);
+}
+
+// Resolve o repositório pelo id (SQLite) e carrega o work item naquele repo.
+export async function loadWorkItemForRepository(
+  id: number,
+  level: Level,
+  number: number,
+): Promise<WorkItemView> {
+  const row = await getRepositoryOr404(id);
+  return loadWorkItem(configForRepository(row), level, number);
+}
+
+// Lista os épicos (issues [EPIC]) de um repositório.
+export async function loadEpicSummaries(id: number): Promise<RepositoryEpics> {
+  const row = await getRepositoryOr404(id);
+  const config = configForRepository(row);
+  const issues = await fetchEpicSummaries(config);
+
+  const epics: EpicSummary[] = issues.map((issue) => {
+    const team = teamOf(issue, config.team);
+    return {
+      number: issue.number,
+      title: stripTypePrefix(issue.title),
+      code: codeOf(issue, team),
+      state: String(issue.state).toUpperCase() === 'CLOSED' ? 'closed' : 'open',
+      url: issue.url ?? '',
+    };
+  });
+
+  return { repository: toRepositoryDTO(row), epics };
 }

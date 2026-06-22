@@ -66,6 +66,30 @@ query EpicView($owner: String!, $repo: String!, $number: Int!) {
   }
 }`;
 
+// Lista de épicos de um repositório: issues com label "[EPIC]" (literal, com
+// colchetes), abertas e fechadas, mais recentes primeiro. Campos enxutos +
+// labels/milestone (para teamOf/codeOf). Sem sub-issues (lista barata).
+const EPICS_QUERY = `
+query RepoEpics($owner: String!, $repo: String!) {
+  repository(owner: $owner, name: $repo) {
+    issues(
+      first: 50
+      labels: ["[EPIC]"]
+      states: [OPEN, CLOSED]
+      orderBy: { field: CREATED_AT, direction: DESC }
+    ) {
+      nodes {
+        number
+        title
+        state
+        url
+        labels(first: 20) { nodes { name } }
+        milestone { title }
+      }
+    }
+  }
+}`;
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function normalize(node: any): GhIssue {
   return {
@@ -124,6 +148,43 @@ export async function fetchIssueTree(config: GitHubConfig, number: number): Prom
   return normalize(issueNode);
 }
 
+// Lista os épicos (issues [EPIC]) de um repositório, já normalizados (lean).
+export async function fetchEpicSummaries(config: GitHubConfig): Promise<GhIssue[]> {
+  const res = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      query: EPICS_QUERY,
+      variables: { owner: config.owner, repo: config.repo },
+    }),
+  });
+
+  if (!res.ok) {
+    throw new UpstreamError(`GitHub API ${res.status}: ${await res.text()}`);
+  }
+
+  const json = (await res.json()) as {
+    errors?: { message: string; type?: string }[];
+    data?: { repository?: { issues?: { nodes?: unknown[] } } | null };
+  };
+  if (json.errors) {
+    const msg = `GitHub GraphQL: ${json.errors.map((e) => e.message).join('; ')}`;
+    const notFound = json.errors.some(
+      (e) => e.type === 'NOT_FOUND' || /could not resolve to a repository/i.test(e.message),
+    );
+    throw notFound ? new NotFoundError(msg) : new UpstreamError(msg);
+  }
+
+  const repo = json.data?.repository;
+  if (!repo) {
+    throw new NotFoundError(`Repositório ${config.owner}/${config.repo} não encontrado.`);
+  }
+  return (repo.issues?.nodes ?? []).map(normalize);
+}
+
 export async function fetchEpicPayload(config: GitHubConfig): Promise<GhEpicPayload> {
   const epic = await fetchIssueTree(config, config.issueNumber);
   const features = epic.subIssues ?? [];
@@ -143,23 +204,4 @@ export async function fetchFileContent(config: GitHubConfig, path: string): Prom
   if (res.status === 404) return null;
   if (!res.ok) throw new UpstreamError(`GitHub Contents API ${res.status}: ${await res.text()}`);
   return res.text();
-}
-
-// Lê a configuração do GitHub das variáveis de ambiente do SERVIDOR.
-// Se ausente, retorna null — o endpoint responde 503 (sem fixture de fallback).
-// O token vive apenas no backend; nunca é exposto ao navegador.
-export function configFromEnv(): GitHubConfig | null {
-  const token = process.env.GITHUB_TOKEN;
-  const repo = process.env.GITHUB_REPO; // "owner/repo"
-  const issue = process.env.GITHUB_EPIC_ISSUE;
-  if (!token || !repo || !issue) return null;
-  const [owner, name] = String(repo).split('/');
-  if (!owner || !name) return null;
-  return {
-    token: String(token),
-    owner,
-    repo: name,
-    issueNumber: parseInt(String(issue), 10),
-    team: process.env.GITHUB_TEAM ? String(process.env.GITHUB_TEAM) : undefined,
-  };
 }

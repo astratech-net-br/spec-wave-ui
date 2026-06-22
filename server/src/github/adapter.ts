@@ -274,4 +274,4 @@ export function adaptStory(issue: GhIssue, ctx: AdaptContext = {}): WorkItemView
   };
 }
 
-export { TYPE_LABELS, teamOf, codeOf, parentFromBody };
+export { TYPE_LABELS, teamOf, codeOf, parentFromBody, stripTypePrefix };

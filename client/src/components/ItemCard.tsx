@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react';
 import type { ChildItem } from '@spec-flow/shared';
 import { STATUS_MAP } from '../lib/status';
-import { hrefFor } from '../lib/router';
+import { hrefForItem } from '../lib/router';
 import { Avatar } from './Avatar';
 import { ProgressBar } from './ProgressBar';
 
 interface ItemCardProps {
   item: ChildItem;
+  repoId: number;
 }
 
 // Envolve o card num link quando há drill-down (Feature/Story); folhas (Task) não.
@@ -21,10 +22,10 @@ function CardShell({ href, children }: { href?: string; children: ReactNode }) {
   return <article className="feature-card">{children}</article>;
 }
 
-export function ItemCard({ item }: ItemCardProps) {
+export function ItemCard({ item, repoId }: ItemCardProps) {
   const style = STATUS_MAP[item.status];
   // Coordenada → href de hash-route (drill-down). Folhas (Task) não têm `to`.
-  const href = item.to ? hrefFor(item.to.level, item.to.number) : undefined;
+  const href = item.to ? hrefForItem(repoId, item.to.level, item.to.number) : undefined;
 
   return (
     <CardShell href={href}>

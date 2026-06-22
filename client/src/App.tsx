@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { DASHBOARD_HREF, parseHash, type Route } from './lib/router';
 import { DashboardPage } from './components/DashboardPage';
+import { RepoEpicsScreen } from './components/RepoEpicsScreen';
 import { WorkItemScreen } from './components/WorkItemScreen';
 
 export default function App() {
@@ -20,6 +21,17 @@ export default function App() {
     return <DashboardPage />;
   }
 
+  if (route.view === 'repo-epics') {
+    return <RepoEpicsScreen key={route.repoId} repoId={route.repoId} />;
+  }
+
   // `key` força remontar a tela ao trocar de item (reinicia o estado de carga).
-  return <WorkItemScreen key={`${route.level}/${route.number}`} level={route.level} number={route.number} />;
+  return (
+    <WorkItemScreen
+      key={`${route.repoId}/${route.level}/${route.number}`}
+      repoId={route.repoId}
+      level={route.level}
+      number={route.number}
+    />
+  );
 }

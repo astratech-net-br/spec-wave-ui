@@ -1,20 +1,39 @@
-// Card de um repositório conectado (Task #7). Exibe nome, URL clicável e a
-// data de conexão formatada. A URL é sanitizada (só http/https) para prevenir
-// XSS; URLs inválidas viram um aviso não-clicável (spec — "URL inválida").
+// Card de um repositório conectado. O card inteiro navega para os épicos do
+// repositório (#/repos/:id/epics); a URL do GitHub continua abrindo em nova aba
+// (link externo, com stopPropagation para não disparar a navegação interna).
+// A URL é sanitizada (só http/https) para prevenir XSS.
 
+import type { KeyboardEvent } from 'react';
 import type { Repository } from '@spec-flow/shared';
 import { formatDateTime } from '../lib/date';
 import { safeHttpUrl } from '../lib/url';
+import { hrefForEpics } from '../lib/router';
 
 interface RepositoryCardProps {
   repo: Repository;
 }
 
 export function RepositoryCard({ repo }: RepositoryCardProps) {
-  const href = safeHttpUrl(repo.url);
+  const externalHref = safeHttpUrl(repo.url);
+  const goToEpics = () => {
+    window.location.hash = hrefForEpics(repo.id);
+  };
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      goToEpics();
+    }
+  };
 
   return (
-    <article className="repo-card">
+    <div
+      className="repo-card repo-card--link"
+      role="link"
+      tabIndex={0}
+      onClick={goToEpics}
+      onKeyDown={onKeyDown}
+      aria-label={`Ver épicos de ${repo.name}`}
+    >
       <div className="repo-card__top">
         <span className="repo-card__dot" />
         <span className="repo-card__name" title={repo.name}>
@@ -22,13 +41,14 @@ export function RepositoryCard({ repo }: RepositoryCardProps) {
         </span>
       </div>
 
-      {href ? (
+      {externalHref ? (
         <a
           className="repo-card__url"
-          href={href}
+          href={externalHref}
           target="_blank"
           rel="noopener noreferrer"
-          title={href}
+          title={externalHref}
+          onClick={(e) => e.stopPropagation()}
         >
           {repo.url}
         </a>
@@ -39,6 +59,6 @@ export function RepositoryCard({ repo }: RepositoryCardProps) {
       <time className="repo-card__date" dateTime={repo.createdAt}>
         {formatDateTime(repo.createdAt)}
       </time>
-    </article>
+    </div>
   );
 }

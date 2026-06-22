@@ -21,10 +21,9 @@ export const config = {
   pageLimit: 50,
 
   // Integração com o GitHub — vive SÓ no servidor (o token nunca vai ao browser).
+  // O repositório-alvo vem de cada linha do SQLite (parseando a url), não do env.
   github: {
     token: process.env.GITHUB_TOKEN ?? '',
-    repo: process.env.GITHUB_REPO ?? '', // "owner/repo"
-    epicIssue: process.env.GITHUB_EPIC_ISSUE ?? '',
     team: process.env.GITHUB_TEAM ?? '',
   },
 

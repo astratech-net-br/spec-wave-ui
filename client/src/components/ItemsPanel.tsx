@@ -4,9 +4,10 @@ import { ItemCard } from './ItemCard';
 interface ItemsPanelProps {
   items: ChildItem[];
   label: string; // "Features" | "Stories" | "Tasks"
+  repoId: number; // escopa os links de drill-down dos cards
 }
 
-export function ItemsPanel({ items, label }: ItemsPanelProps) {
+export function ItemsPanel({ items, label, repoId }: ItemsPanelProps) {
   return (
     <section aria-label={label}>
       <div className="features__head">
@@ -29,7 +30,7 @@ export function ItemsPanel({ items, label }: ItemsPanelProps) {
       ) : (
         <div className="feature-list">
           {items.map((item, i) => (
-            <ItemCard key={`${item.name}-${i}`} item={item} />
+            <ItemCard key={`${item.name}-${i}`} item={item} repoId={repoId} />
           ))}
         </div>
       )}

@@ -15,7 +15,6 @@ import { config } from './config.ts';
 import { logger } from './lib/logger.ts';
 import { db, runMigrations } from './db/index.ts';
 import { repositoryRoutes } from './routes/repositoryRoutes.ts';
-import { workItemRoutes } from './routes/workItemRoutes.ts';
 
 export function createApp() {
   const app = express();
@@ -31,7 +30,6 @@ export function createApp() {
   });
 
   app.use('/api', repositoryRoutes);
-  app.use('/api', workItemRoutes);
 
   // 404 JSON — escopado em /api para não engolir as rotas SPA do fallback.
   app.use('/api', (_req, res) => {
