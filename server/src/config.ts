@@ -19,4 +19,17 @@ export const config = {
   packageRoot,
   // Limite de itens retornados pela listagem (spec: até 50 por página).
   pageLimit: 50,
+
+  // Integração com o GitHub — vive SÓ no servidor (o token nunca vai ao browser).
+  github: {
+    token: process.env.GITHUB_TOKEN ?? '',
+    repo: process.env.GITHUB_REPO ?? '', // "owner/repo"
+    epicIssue: process.env.GITHUB_EPIC_ISSUE ?? '',
+    team: process.env.GITHUB_TEAM ?? '',
+  },
+
+  // Build do frontend, servido em produção (processo único).
+  clientDist: path.resolve(packageRoot, '../client/dist'),
+  // Em produção (ou SERVE_STATIC=true) o Express serve o client/dist + fallback SPA.
+  serveStatic: process.env.SERVE_STATIC === 'true' || process.env.NODE_ENV === 'production',
 };

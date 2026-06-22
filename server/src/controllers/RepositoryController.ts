@@ -3,6 +3,7 @@
 //   { id, name, url, createdAt }  — createdAt em ISO 8601.
 
 import type { Request, Response } from 'express';
+import type { Repository } from '@spec-flow/shared';
 import { db } from '../db/index.ts';
 import { config } from '../config.ts';
 import { logger } from '../lib/logger.ts';
@@ -15,13 +16,6 @@ interface RepositoryRow {
   created_at: string;
 }
 
-export interface RepositoryDTO {
-  id: number;
-  name: string;
-  url: string;
-  createdAt: string;
-}
-
 // SQLite guarda CURRENT_TIMESTAMP como "YYYY-MM-DD HH:MM:SS" em UTC, sem
 // sufixo de fuso. Normalizamos para ISO 8601 para o frontend formatar.
 function toIso(raw: string): string {
@@ -30,7 +24,7 @@ function toIso(raw: string): string {
   return Number.isNaN(d.getTime()) ? raw : d.toISOString();
 }
 
-function toDTO(row: RepositoryRow): RepositoryDTO {
+function toDTO(row: RepositoryRow): Repository {
   // URL inválida no banco (dados corrompidos): logamos mas não bloqueamos a
   // listagem (spec — caso de erro "Violação/URL inválida": não bloquear).
   if (!isValidHttpUrl(row.url)) {
