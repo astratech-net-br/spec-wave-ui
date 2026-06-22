@@ -7,6 +7,15 @@ export type Status = 'done' | 'prog' | 'todo';
 
 export type Level = 'epic' | 'feature' | 'story';
 
+// Repositório conectado, exibido no Dashboard (Story #3). Espelha o schema do
+// endpoint GET /api/repositories.
+export interface Repository {
+  id: number;
+  name: string;
+  url: string;
+  createdAt: string; // ISO 8601
+}
+
 export interface Person {
   name: string;
   initials: string;

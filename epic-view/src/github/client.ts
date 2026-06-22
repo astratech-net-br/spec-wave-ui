@@ -17,7 +17,8 @@ export interface GitHubConfig {
 
 const ENDPOINT = 'https://api.github.com/graphql';
 
-// Fragmento reutilizável para os campos básicos de uma issue.
+// Campos completos de uma issue — usados no item atual (nível 0) e nos seus
+// filhos diretos (nível 1), que são os cards exibidos na tela.
 const ISSUE_FIELDS = `
   number
   title
@@ -28,6 +29,17 @@ const ISSUE_FIELDS = `
   labels(first: 20) { nodes { name } }
   assignees(first: 5) { nodes { login name } }
   milestone { title dueOn createdAt }
+`;
+
+// Campos enxutos para os níveis profundos (2+). Eles nunca são exibidos —
+// só alimentam countTasks (adapter), que precisa apenas de `state` e da
+// estrutura de sub-issues. Omitir labels/assignees aqui é essencial: o GraphQL
+// do GitHub multiplica os limites das conexões aninhadas, e um `labels(first:20)`
+// sob 3 níveis de `subIssues(first:50)` estouraria o teto de 500.000 nós
+// (50³ × 20 = 2.500.000). Sem essas conexões, o pior caso cai para 50³ = 125.000.
+const COUNT_FIELDS = `
+  number
+  state
 `;
 
 // 3 níveis de sub-issues: Feature → Story → Task.
@@ -41,9 +53,9 @@ query EpicView($owner: String!, $repo: String!, $number: Int!) {
           ${ISSUE_FIELDS}
           subIssues(first: 50) {
             nodes {
-              ${ISSUE_FIELDS}
+              ${COUNT_FIELDS}
               subIssues(first: 50) {
-                nodes { ${ISSUE_FIELDS} }
+                nodes { ${COUNT_FIELDS} }
               }
             }
           }
