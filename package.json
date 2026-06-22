@@ -14,9 +14,12 @@
     "dev:client": "npm -w client run dev",
     "build": "npm -w client run build",
     "start": "SERVE_STATIC=true npm -w server run start",
-    "typecheck": "npm -w shared run typecheck && npm -w client run typecheck && npm -w server run typecheck"
+    "typecheck": "npm -w shared run typecheck && npm -w client run typecheck && npm -w server run typecheck",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium"
   },
   "devDependencies": {
+    "@playwright/test": "1.60.0",
     "concurrently": "^9.1.0"
   }
 }
