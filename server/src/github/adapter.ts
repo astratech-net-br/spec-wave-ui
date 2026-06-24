@@ -2,7 +2,7 @@
 // A hierarquia RFC-001 é uniforme, então os três níveis reusam os mesmos helpers;
 // só o conjunto de metadados, os rótulos e o tipo de filho (com/sem barra) variam.
 
-import type { ChildItem, Crumb, Level, MetaField, Person, WorkItemView } from '@spec-flow/shared';
+import type { ChildItem, Crumb, Level, MetaField, Person, Status, WorkItemView } from '@spec-flow/shared';
 import { avatarColor, initials } from '../lib/avatar.ts';
 import { STATUS_LABELS, meanPct, statusFromPct } from '../lib/status.ts';
 import { dateRange } from '../lib/date.ts';
@@ -23,6 +23,25 @@ const AREA_NAMES = new Set(['Frontend', 'Backend', 'Mobile', 'Infra', 'DevOps', 
 
 function isClosed(issue: GhIssue): boolean {
   return String(issue.state).toUpperCase() === 'CLOSED';
+}
+
+// Status de uma Task (folha). Diferente de Feature/Story, ela não tem progresso
+// parcial: é binária no `state` (closed → done), mas o GitHub Projects v2 ainda
+// expõe um terceiro estado, "Em andamento", no campo Status — que o open/closed
+// não distingue de "A fazer". Por isso consultamos `projectStatus`. Mapeamos os
+// rótulos do board (PT/EN) para os 3 status do domínio.
+function leafStatus(issue: GhIssue): Status {
+  if (isClosed(issue)) return 'done';
+  const status = (issue.projectStatus ?? '').toLowerCase();
+  if (/progress|andamento|doing|review|wip/.test(status)) return 'prog';
+  if (/done|conclu/.test(status)) return 'done';
+  return 'todo';
+}
+
+// pct sintético da folha, coerente com seu status — só alimenta a legenda do
+// painel (que conta por pct): em andamento → 50 (>0 e <100), feito → 100.
+function leafPct(status: Status): number {
+  return status === 'done' ? 100 : status === 'prog' ? 50 : 0;
 }
 
 // Remove o prefixo de tipo "[FEATURE] ", "[EPIC] " etc. do título.
@@ -105,8 +124,8 @@ function toChild(issue: GhIssue, opts: { leaf?: boolean; childLevel?: Level } = 
   };
 
   if (opts.leaf) {
-    const pct = isClosed(issue) ? 100 : 0;
-    return { ...base, status: statusFromPct(pct), pct, doneTasks: 0, totalTasks: 0, leaf: true };
+    const status = leafStatus(issue);
+    return { ...base, status, pct: leafPct(status), doneTasks: 0, totalTasks: 0, leaf: true };
   }
 
   const { done, total } = countTasks(issue);

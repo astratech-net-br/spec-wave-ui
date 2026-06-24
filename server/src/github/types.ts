@@ -31,6 +31,11 @@ export interface GhIssue {
   assignees: GhUser[];
   milestone?: GhMilestone | null;
   createdAt?: string | null;
+  // Valor do campo "Status" (single-select) do GitHub Projects v2, quando a issue
+  // está num Project — ex.: "Backlog Técnico", "Ready", "In Progress", "Done".
+  // É a ÚNICA fonte do "em andamento": o `state` open/closed não distingue uma
+  // task a fazer de uma em execução. `null` quando a issue não está num Project.
+  projectStatus?: string | null;
   // Sub-issues (GitHub sub-issues / hierarquia). Para uma Feature, contém suas
   // Stories; cada Story contém suas Tasks. Folhas têm subIssues vazio/ausente.
   subIssues?: GhIssue[];

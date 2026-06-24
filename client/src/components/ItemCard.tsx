@@ -38,29 +38,43 @@ export function ItemCard({ item, repoId }: ItemCardProps) {
       </div>
 
       {item.leaf ? (
-        // Task: folha binária — checkbox + badge de status, sem barra nem contagem.
-        <div className="feature-card__footer">
-          <div className="tags">
-            {item.tags.map((tag) => (
-              <span className="tag" key={tag}>
-                {tag}
-              </span>
-            ))}
-          </div>
-          <div className="feature-card__meta">
-            <span
-              className={`checkbox${item.status === 'done' ? ' checkbox--done' : ''}`}
-              role="checkbox"
-              aria-checked={item.status === 'done'}
-              aria-label={item.status === 'done' ? 'Concluída' : 'A fazer'}
+        // Task: folha binária — checkbox + badge de status, sem barra de progresso.
+        // Em execução ('prog') ganha uma barra indeterminada animada (sem %, pois
+        // a task não tem progresso parcial — só sinaliza que está rodando).
+        <>
+          {item.status === 'prog' && (
+            <div
+              className="task-running"
+              role="progressbar"
+              aria-label={`${item.name}: em execução`}
+              aria-valuetext="Em execução"
             >
-              {item.status === 'done' ? '✓' : ''}
-            </span>
-            <span className="status-badge" style={{ color: style.color, background: style.bg }}>
-              {style.label}
-            </span>
+              <div className="task-running__bar" />
+            </div>
+          )}
+          <div className="feature-card__footer">
+            <div className="tags">
+              {item.tags.map((tag) => (
+                <span className="tag" key={tag}>
+                  {tag}
+                </span>
+              ))}
+            </div>
+            <div className="feature-card__meta">
+              <span
+                className={`checkbox${item.status === 'done' ? ' checkbox--done' : ''}`}
+                role="checkbox"
+                aria-checked={item.status === 'done'}
+                aria-label={item.status === 'done' ? 'Concluída' : 'A fazer'}
+              >
+                {item.status === 'done' ? '✓' : ''}
+              </span>
+              <span className="status-badge" style={{ color: style.color, background: style.bg }}>
+                {style.label}
+              </span>
+            </div>
           </div>
-        </div>
+        </>
       ) : (
         <>
           <div className="feature-card__progress">

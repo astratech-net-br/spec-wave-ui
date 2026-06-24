@@ -613,6 +613,42 @@ button {
 .feature-card__progress .track { flex: 1; height: 7px; border-radius: 5px; }
 .feature-card__progress .track__fill { border-radius: 5px; background: none; }
 
+/* Barra indeterminada — task em execução ('prog'). Sem %: só sinaliza que está
+   rodando, com um traço de accent que desliza continuamente da esquerda à direita. */
+.task-running {
+  position: relative;
+  height: 5px;
+  margin-bottom: 13px;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  overflow: hidden;
+}
+
+.task-running__bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  border-radius: 5px;
+  background: linear-gradient(90deg, transparent, var(--accent), var(--accent-light));
+  animation: task-running-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes task-running-slide {
+  from { left: -40%; }
+  to { left: 100%; }
+}
+
+/* Respeita usuários que pedem menos movimento: vira uma barra estática suave. */
+@media (prefers-reduced-motion: reduce) {
+  .task-running__bar {
+    animation: none;
+    left: 0;
+    width: 100%;
+    opacity: 0.55;
+  }
+}
+
 .feature-card__pct {
   width: 38px;
   text-align: right;

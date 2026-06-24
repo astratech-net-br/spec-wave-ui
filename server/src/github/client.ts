@@ -30,6 +30,18 @@ const ISSUE_FIELDS = `
   labels(first: 20) { nodes { name } }
   assignees(first: 5) { nodes { login name } }
   milestone { title dueOn createdAt }
+  projectItems(first: 10) {
+    nodes {
+      fieldValues(first: 20) {
+        nodes {
+          ... on ProjectV2ItemFieldSingleSelectValue {
+            name
+            field { ... on ProjectV2SingleSelectField { name } }
+          }
+        }
+      }
+    }
+  }
 `;
 
 // Campos enxutos para os níveis profundos (2+). Eles nunca são exibidos —
@@ -91,6 +103,18 @@ query RepoEpics($owner: String!, $repo: String!) {
 }`;
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+// Extrai o valor do campo single-select "Status" do(s) Project(s) v2 da issue.
+// Valores de outros tipos de campo voltam como `{}` (não casaram o fragmento),
+// então filtramos por `field.name === 'Status'`. Pega o primeiro que encontrar.
+function projectStatusOf(node: any): string | null {
+  for (const item of node.projectItems?.nodes ?? []) {
+    for (const fv of item.fieldValues?.nodes ?? []) {
+      if (fv?.field?.name === 'Status' && typeof fv.name === 'string') return fv.name;
+    }
+  }
+  return null;
+}
+
 function normalize(node: any): GhIssue {
   return {
     number: node.number,
@@ -104,6 +128,7 @@ function normalize(node: any): GhIssue {
     milestone: node.milestone
       ? { title: node.milestone.title, dueOn: node.milestone.dueOn, createdAt: node.milestone.createdAt }
       : null,
+    projectStatus: projectStatusOf(node),
     subIssues: (node.subIssues?.nodes ?? []).map(normalize),
   };
 }
