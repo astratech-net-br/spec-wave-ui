@@ -18,7 +18,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
 
       - name: Validate spec and plan
         run: npx @spec-wave/cli validate --issue-number ${{ github.event.issue.number }}
