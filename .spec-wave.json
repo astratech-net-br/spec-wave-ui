@@ -1,32 +1,17 @@
 {
-  "version": "0.2.0",
+  "version": "0.3.1",
   "owner": "moacsjr",
   "repo": "spec-flow-ui",
+  "project": {
+    "title": "spec-flow-ui — Spec Flow",
+    "url": null,
+    "id": null,
+    "number": null,
+    "fields": null
+  },
   "ai": {
     "provider": "openrouter",
     "model": "deepseek/deepseek-r1"
   },
-  "project": {
-    "title": "spec-flow-ui — Spec Flow",
-    "url": "https://github.com/users/moacsjr/projects/13",
-    "id": "PVT_kwHOACoZos4BbB4u",
-    "number": 13,
-    "etapaFieldId": "PVTSSF_lAHOACoZos4BbB4uzhV1S3g",
-    "stageOptions": {
-      "📥 Backlog": "bd4160bc",
-      "🎯 Priorizado": "9dc3e753",
-      "📋 Plan": "0f1153a7",
-      "📋 Spec": "786a51bd",
-      "✅ Ready": "6c44be72",
-      "📋 Backlog Técnico": "d67572b6",
-      "🚧 Desenvolvimento": "35763bab",
-      "👀 Code Review": "043c7609",
-      "🧪 QA": "61efcdcb",
-      "📋 Homologação": "e7f6b523",
-      "🚀 Deploy": "910c0854",
-      "🎉 Done": "cbb073ed"
-    }
-  },
-  "initializedAt": "2026-06-18T15:11:04.944Z",
-  "refreshedAt": "2026-06-18T15:13:05.548Z"
+  "initializedAt": "2026-06-24T18:19:43.159Z"
 }
