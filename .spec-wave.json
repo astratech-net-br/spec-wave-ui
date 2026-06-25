@@ -73,8 +73,8 @@
     }
   },
   "ai": {
-    "provider": "anthropic",
-    "model": "claude-sonnet-4-6"
+    "provider": "openrouter",
+    "model": "deepseek/deepseek-r1-0528"
   },
   "initializedAt": "2026-06-25T18:23:38.640Z"
 }

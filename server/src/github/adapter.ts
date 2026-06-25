@@ -49,6 +49,14 @@ function stripTypePrefix(title: string): string {
   return title.replace(/^\s*\[[A-Z]+\]\s*/, '').trim();
 }
 
+// Extrai o prefixo de tipo normalizado ("[FEATURE] ") de um título, ou '' se não
+// houver. Usado na edição para reanexar o prefixo ao salvar (o título exibido é
+// sempre o sem-prefixo de stripTypePrefix).
+function typePrefixOf(title: string): string {
+  const m = title.match(/^\s*(\[[A-Z]+\])\s*/);
+  return m ? `${m[1]} ` : '';
+}
+
 function labelNames(issue: GhIssue): string[] {
   return (issue.labels || []).map((l) => l.name);
 }
@@ -184,6 +192,7 @@ export interface AdaptContext {
   team?: string; // fallback de time (config/payload)
   parent?: ParentRef; // pai direto (feature→epic, story→feature)
   grandparent?: ParentRef; // avô (story→epic)
+  spec?: string | null; // conteúdo do spec.md (Feature)
   plan?: string | null; // conteúdo do plan.md (Feature)
   status?: string; // coluna de Status do Project (Epic)
 }
@@ -251,6 +260,7 @@ export function adaptFeature(issue: GhIssue, ctx: AdaptContext = {}): WorkItemVi
     breadcrumb,
     meta,
     descriptionMdx: issue.body || '',
+    specMdx: ctx.spec ?? null,
     planMdx: ctx.plan ?? null,
     headerPct: pct,
     progressLabel: 'Progresso da feature',
@@ -293,4 +303,4 @@ export function adaptStory(issue: GhIssue, ctx: AdaptContext = {}): WorkItemView
   };
 }
 
-export { TYPE_LABELS, teamOf, codeOf, parentFromBody, stripTypePrefix };
+export { TYPE_LABELS, teamOf, codeOf, parentFromBody, stripTypePrefix, typePrefixOf };

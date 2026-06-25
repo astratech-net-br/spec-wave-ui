@@ -27,6 +27,13 @@ export const config = {
     team: process.env.GITHUB_TEAM ?? '',
   },
 
+  // LLM via OpenRouter — usada no refino interativo de spec.md/plan.md pela UI.
+  // A chave vive SÓ no servidor. Sem chave, os endpoints de refino retornam 503.
+  openrouter: {
+    apiKey: process.env.OPENROUTER_API_KEY ?? '',
+    model: process.env.OPENROUTER_MODEL ?? 'deepseek/deepseek-r1',
+  },
+
   // Build do frontend, servido em produção (processo único).
   clientDist: path.resolve(packageRoot, '../client/dist'),
   // Em produção (ou SERVE_STATIC=true) o Express serve o client/dist + fallback SPA.

@@ -3,9 +3,19 @@
 // pronto para exibição. O frontend não conhece token nem a forma das issues.
 // Em dev, o Vite faz proxy de /api para a porta 3001 (veja vite.config.ts).
 
-import type { Level, WorkItemView } from '@spec-flow/shared';
+import type {
+  ArtifactKind,
+  CreateFeatureRequest,
+  Level,
+  WorkItemPatch,
+  WorkItemView,
+} from '@spec-flow/shared';
 
 const REQUEST_TIMEOUT_MS = 10_000;
+// Criar a feature encadeia várias chamadas ao GitHub (issue + sub-issue + board).
+const CREATE_FEATURE_TIMEOUT_MS = 30_000;
+// O refino chama a LLM (OpenRouter) — pode levar dezenas de segundos.
+const LLM_TIMEOUT_MS = 120_000;
 
 function isWorkItemView(value: unknown): value is WorkItemView {
   if (typeof value !== 'object' || value === null) return false;
@@ -44,6 +54,163 @@ export async function fetchWorkItem(
   try {
     const res = await fetch(`/api/repositories/${repoId}/workitems/${level}/${number}`, {
       headers: { Accept: 'application/json' },
+      signal: timeout.signal,
+    });
+    if (!res.ok) {
+      throw new Error(await errorMessage(res));
+    }
+    const json: unknown = await res.json();
+    if (!isWorkItemView(json)) {
+      throw new Error('Resposta da API em formato inesperado.');
+    }
+    return json;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError' && !signal?.aborted) {
+      throw new Error('Tempo de requisição esgotado.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onExternalAbort);
+  }
+}
+
+// Faz um POST JSON com o mesmo scaffolding de timeout/abort, validando que a
+// resposta é um WorkItemView. `timeoutMs` é configurável (refino usa um maior).
+async function postForView(
+  url: string,
+  payload: unknown,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<WorkItemView> {
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), timeoutMs);
+  const onExternalAbort = () => timeout.abort();
+  signal?.addEventListener('abort', onExternalAbort);
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: payload === undefined ? undefined : JSON.stringify(payload),
+      signal: timeout.signal,
+    });
+    if (!res.ok) {
+      throw new Error(await errorMessage(res));
+    }
+    const json: unknown = await res.json();
+    if (!isWorkItemView(json)) {
+      throw new Error('Resposta da API em formato inesperado.');
+    }
+    return json;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError' && !signal?.aborted) {
+      throw new Error('Tempo de requisição esgotado.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onExternalAbort);
+  }
+}
+
+const artifactBase = (repoId: number, number: number, kind: ArtifactKind): string =>
+  `/api/repositories/${repoId}/workitems/feature/${number}/${kind}`;
+
+// Cria o artefato: aplica o label do spec-wave + move a etapa. A geração do
+// arquivo fica a cargo da GitHub Action — o caller faz o poll de fetchWorkItem.
+export async function createArtifact(
+  repoId: number,
+  number: number,
+  kind: ArtifactKind,
+): Promise<WorkItemView> {
+  return postForView(`${artifactBase(repoId, number, kind)}/create`, {}, REQUEST_TIMEOUT_MS);
+}
+
+// Cria uma Feature sob o épico (issue [FEATURE] + vínculo de sub-issue + board)
+// e devolve o WorkItemView do épico recarregado — o caller troca a view inteira.
+export async function createFeature(
+  repoId: number,
+  epicNumber: number,
+  input: CreateFeatureRequest,
+): Promise<WorkItemView> {
+  return postForView(
+    `/api/repositories/${repoId}/workitems/epic/${epicNumber}/features`,
+    input,
+    CREATE_FEATURE_TIMEOUT_MS,
+  );
+}
+
+// Refina o artefato: registra o prompt como comentário e devolve o texto gerado
+// pela LLM (sem salvar). Timeout estendido (chamada à LLM).
+export async function refineArtifact(
+  repoId: number,
+  number: number,
+  kind: ArtifactKind,
+  prompt: string,
+  base?: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), LLM_TIMEOUT_MS);
+  const onExternalAbort = () => timeout.abort();
+  signal?.addEventListener('abort', onExternalAbort);
+
+  try {
+    const res = await fetch(`${artifactBase(repoId, number, kind)}/refine`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(base === undefined ? { prompt } : { prompt, base }),
+      signal: timeout.signal,
+    });
+    if (!res.ok) {
+      throw new Error(await errorMessage(res));
+    }
+    const json = (await res.json()) as { content?: unknown };
+    if (typeof json.content !== 'string') {
+      throw new Error('Resposta da API em formato inesperado.');
+    }
+    return json.content;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError' && !signal?.aborted) {
+      throw new Error('Tempo de requisição esgotado.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onExternalAbort);
+  }
+}
+
+// Salva o artefato (commit do arquivo) e devolve o WorkItemView atualizado.
+export async function saveArtifact(
+  repoId: number,
+  number: number,
+  kind: ArtifactKind,
+  content: string,
+): Promise<WorkItemView> {
+  return postForView(`${artifactBase(repoId, number, kind)}/save`, { content }, REQUEST_TIMEOUT_MS);
+}
+
+// Salva uma edição parcial (título/descrição) e devolve o WorkItemView atualizado.
+// Mesmo scaffolding de timeout/abort do fetchWorkItem; PATCH com corpo JSON.
+export async function saveWorkItem(
+  repoId: number,
+  level: Level,
+  number: number,
+  patch: WorkItemPatch,
+  signal?: AbortSignal,
+): Promise<WorkItemView> {
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), REQUEST_TIMEOUT_MS);
+  const onExternalAbort = () => timeout.abort();
+  signal?.addEventListener('abort', onExternalAbort);
+
+  try {
+    const res = await fetch(`/api/repositories/${repoId}/workitems/${level}/${number}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(patch),
       signal: timeout.signal,
     });
     if (!res.ok) {

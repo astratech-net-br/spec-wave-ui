@@ -1,9 +1,12 @@
-import type { MetaField, WorkItemView } from '@spec-flow/shared';
+import type { MetaField, WorkItemPatch, WorkItemView } from '@spec-flow/shared';
 import { Avatar } from './Avatar';
 import { ProgressPanel } from './ProgressPanel';
+import { EditButton, EditError, EditActions } from './EditControls';
+import { useInlineEdit } from '../hooks/useInlineEdit';
 
 interface HeroProps {
   view: WorkItemView;
+  onSave?: (patch: WorkItemPatch) => Promise<void>;
 }
 
 function MetaValue({ field }: { field: MetaField }) {
@@ -33,7 +36,10 @@ function MetaValue({ field }: { field: MetaField }) {
   return <>{field.value}</>;
 }
 
-export function Hero({ view }: HeroProps) {
+export function Hero({ view, onSave }: HeroProps) {
+  const title = useInlineEdit(view.title, (draft) => ({ title: draft.trim() }), onSave);
+  const titleValid = title.draft.trim().length > 0;
+
   return (
     <section className="hero">
       <div className="hero__identity">
@@ -46,7 +52,28 @@ export function Hero({ view }: HeroProps) {
           <span className="code">{view.code}</span>
         </div>
 
-        <h1 className="hero__title">{view.title}</h1>
+        {title.editing ? (
+          <div className="hero__title-edit">
+            <input
+              className="edit-input edit-input--title"
+              value={title.draft}
+              onChange={(e) => title.setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && titleValid) title.save();
+                if (e.key === 'Escape') title.cancel();
+              }}
+              aria-label="Título"
+              autoFocus
+            />
+            <EditActions edit={title} canSave={titleValid} />
+            <EditError message={title.error} />
+          </div>
+        ) : (
+          <div className="hero__title-row">
+            <h1 className="hero__title">{view.title}</h1>
+            {onSave && <EditButton label="Editar título" onClick={title.begin} />}
+          </div>
+        )}
 
         <div className="meta-row">
           {view.meta.map((field) => (

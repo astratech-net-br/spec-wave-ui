@@ -7,7 +7,7 @@ import type { KeyboardEvent } from 'react';
 import type { Repository } from '@spec-flow/shared';
 import { formatDateTime } from '../lib/date';
 import { safeHttpUrl } from '../lib/url';
-import { hrefForEpics } from '../lib/router';
+import { hrefForEpics, hrefForRepoEdit } from '../lib/router';
 
 interface RepositoryCardProps {
   repo: Repository;
@@ -39,6 +39,15 @@ export function RepositoryCard({ repo }: RepositoryCardProps) {
         <span className="repo-card__name" title={repo.name}>
           {repo.name}
         </span>
+        <a
+          className="repo-card__edit"
+          href={hrefForRepoEdit(repo.id)}
+          onClick={(e) => e.stopPropagation()}
+          aria-label={`Editar ${repo.name}`}
+          title="Editar repositório"
+        >
+          ✎
+        </a>
       </div>
 
       {externalHref ? (

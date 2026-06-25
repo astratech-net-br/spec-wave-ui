@@ -3,9 +3,9 @@
 // + descrição + filhos. Toda integração com o GitHub fica no servidor; aqui só
 // exibimos. O repoId escopa a busca e os links de drill-down/breadcrumb.
 
-import { useEffect, useState } from 'react';
-import type { Level, WorkItemView } from '@spec-flow/shared';
-import { fetchWorkItem } from '../data/workItem';
+import { useCallback, useEffect, useState } from 'react';
+import type { CreateFeatureRequest, Level, WorkItemPatch, WorkItemView } from '@spec-flow/shared';
+import { createFeature, fetchWorkItem, saveWorkItem } from '../data/workItem';
 import { DASHBOARD_HREF, hrefForEpics, hrefForItem } from '../lib/router';
 import { TopBar, type BreadCrumb } from './TopBar';
 import { Hero } from './Hero';
@@ -43,6 +43,33 @@ export function WorkItemScreen({ repoId, level, number }: WorkItemScreenProps) {
     return () => controller.abort();
   }, [repoId, level, number]);
 
+  // Salva uma edição parcial e troca a view pela versão atualizada do backend.
+  // Repassa o erro para o componente filho exibir feedback inline e seguir em
+  // modo de edição.
+  const handleSave = useCallback(
+    async (patch: WorkItemPatch) => {
+      const updated = await saveWorkItem(repoId, level, number, patch);
+      setState({ phase: 'ready', view: updated });
+    },
+    [repoId, level, number],
+  );
+
+  // Substitui a view pela versão recebida (usada pelo fluxo de spec/plan:
+  // create/save devolvem o WorkItemView, e o poll da geração atualiza por aqui).
+  const applyView = useCallback((view: WorkItemView) => {
+    setState({ phase: 'ready', view });
+  }, []);
+
+  // Cria uma Feature sob o épico atual e troca a view pelo épico recarregado
+  // (com a nova feature na lista). Só faz sentido na Epic View — ver render.
+  const handleCreateFeature = useCallback(
+    async (input: CreateFeatureRequest) => {
+      const updated = await createFeature(repoId, number, input);
+      setState({ phase: 'ready', view: updated });
+    },
+    [repoId, number],
+  );
+
   if (state.phase === 'loading') {
     return <LoadingState />;
   }
@@ -79,10 +106,24 @@ export function WorkItemScreen({ repoId, level, number }: WorkItemScreenProps) {
     <>
       <TopBar breadcrumb={breadcrumb} owner={view.owner} />
       <main className="page">
-        <Hero view={view} />
+        <Hero view={view} onSave={handleSave} />
         <div className="body-grid">
-          <Description source={view.descriptionMdx} plan={view.planMdx} />
-          <ItemsPanel items={view.children} label={view.childrenLabel} repoId={repoId} />
+          <Description
+            level={view.level}
+            repoId={repoId}
+            number={number}
+            source={view.descriptionMdx}
+            spec={view.specMdx}
+            plan={view.planMdx}
+            onSave={handleSave}
+            applyView={applyView}
+          />
+          <ItemsPanel
+            items={view.children}
+            label={view.childrenLabel}
+            repoId={repoId}
+            onCreate={view.level === 'epic' ? handleCreateFeature : undefined}
+          />
         </div>
       </main>
     </>

@@ -11,4 +11,12 @@ export type {
   MetaField,
   Crumb,
   WorkItemView,
+  WorkItemPatch,
+  CreateRepositoryRequest,
+  UpdateRepositoryRequest,
+  CreateFeatureRequest,
+  ArtifactKind,
+  ArtifactRefineRequest,
+  ArtifactRefineResponse,
+  ArtifactSaveRequest,
 } from './types';

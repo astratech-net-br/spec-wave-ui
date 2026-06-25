@@ -24,6 +24,34 @@ export interface Repository {
   name: string;
   url: string;
   createdAt: string; // ISO 8601
+  projectUrl?: string | null; // Projects v2 vinculado (para mover etapas); null = não configurado
+}
+
+// Criação de um repositório conectado. POST /api/repositories.
+// `projectUrl` é opcional: quando informado, o servidor introspecta o Projects v2
+// (campo de etapa + opções) para permitir mover a Feature pela UI.
+export interface CreateRepositoryRequest {
+  url: string;
+  projectUrl?: string;
+}
+
+// Edição de um repositório. PATCH /api/repositories/:id. Campos omitidos são
+// mantidos; `projectUrl: ''` (vazio) desvincula o Projects v2.
+export interface UpdateRepositoryRequest {
+  url?: string;
+  projectUrl?: string;
+}
+
+// Criação de uma Feature sob um Épico. POST /api/repositories/:id/workitems/epic/:number/features.
+// O servidor cria a issue [FEATURE] (label + prefixo no título), a vincula como
+// sub-issue do épico e — best-effort — a adiciona ao Projects v2 (Etapa = Backlog,
+// Work Item Type = Feature, Prioridade/Área). `priority` ∈ P0–P3; `area` ∈ áreas
+// do RFC (Frontend, Backend, …). Ambos viram label da issue + campo do board.
+export interface CreateFeatureRequest {
+  title: string;
+  descriptionMdx?: string; // corpo da issue (opcional)
+  priority?: string; // 'P0' | 'P1' | 'P2' | 'P3'
+  area?: string; // 'Frontend' | 'Backend' | 'Mobile' | 'Infra' | 'DevOps' | 'Data'
 }
 
 // Resumo de um épico na lista de épicos de um repositório (issues com label
@@ -84,10 +112,42 @@ export interface WorkItemView {
   owner: Person;
   breadcrumb: Crumb[];
   meta: MetaField[];
-  descriptionMdx: string; // Spec (corpo da issue)
-  planMdx?: string | null; // só Feature; null/undefined = sem aba Plan
+  descriptionMdx: string; // Feature (corpo da issue)
+  specMdx?: string | null; // só Feature: docs/features/<slug>/spec.md; null = sem aba Spec
+  planMdx?: string | null; // só Feature: docs/features/<slug>/plan.md; null = sem aba Plan
   headerPct: number; // % grande do painel de progresso
   progressLabel: string; // "Progresso do épico" / "da feature" / "da story"
   childrenLabel: string; // "Features" | "Stories" | "Tasks"
   children: ChildItem[];
+}
+
+// Edição parcial de um work item (issue do GitHub). Campos espelham WorkItemView
+// para o client falar um vocabulário só; o server mapeia descriptionMdx → body.
+// PATCH /api/repositories/:id/workitems/:level/:number. Ao menos um campo.
+export interface WorkItemPatch {
+  title?: string; // novo título da issue
+  descriptionMdx?: string; // novo corpo da issue (aba Feature)
+}
+
+// --- Geração/refino interativo de spec.md / plan.md (só Feature) ---
+// O artefato é um arquivo `docs/features/<slug>/{spec,plan}.md` no repositório.
+export type ArtifactKind = 'spec' | 'plan';
+
+// POST .../workitems/feature/:number/:artifact/refine — registra o prompt como
+// comentário na issue, envia o artefato atual + o prompt à LLM (OpenRouter) e
+// devolve o texto gerado SEM salvar (o usuário decide salvar/descartar).
+export interface ArtifactRefineRequest {
+  prompt: string;
+  // Base sobre a qual ajustar. Ausente → o servidor lê o arquivo atual do repo.
+  // Presente → permite iterar sobre um rascunho ainda não salvo ("solicitar alteração").
+  base?: string;
+}
+export interface ArtifactRefineResponse {
+  content: string; // markdown gerado pela LLM
+}
+
+// POST .../workitems/feature/:number/:artifact/save — commita o conteúdo no
+// arquivo (branch padrão) e devolve o WorkItemView recarregado.
+export interface ArtifactSaveRequest {
+  content: string;
 }

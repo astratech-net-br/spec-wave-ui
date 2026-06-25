@@ -8,12 +8,23 @@
 import type { GhEpicPayload, GhIssue } from './types.ts';
 import { NotFoundError, UpstreamError } from '../lib/errors.ts';
 
+// Config do Projects v2 de um repositório (descoberta no cadastro e persistida no
+// SQLite). Permite mover a Feature de etapa: `etapaFieldId` é o campo single-select
+// das etapas e `stageOptions` mapeia o NOME da opção (cru, ex. "📋 Spec") → id.
+export interface ProjectConfig {
+  projectId: string; // node id do ProjectV2
+  projectNumber: number;
+  etapaFieldId: string; // id do campo single-select de etapa
+  stageOptions: Record<string, string>; // nome da opção → optionId
+}
+
 export interface GitHubConfig {
   token: string;
   owner: string;
   repo: string;
   issueNumber: number; // número da issue do Epic
   team?: string;
+  project?: ProjectConfig; // Projects v2 (opcional; ausente = sem mover etapa)
 }
 
 const ENDPOINT = 'https://api.github.com/graphql';
@@ -230,3 +241,457 @@ export async function fetchFileContent(config: GitHubConfig, path: string): Prom
   if (!res.ok) throw new UpstreamError(`GitHub Contents API ${res.status}: ${await res.text()}`);
   return res.text();
 }
+
+// Lê o título cru (com prefixo "[FEATURE]" etc.) de uma issue (REST GET leve).
+// Usado na edição para reanexar o prefixo ao salvar um novo título.
+export async function fetchIssueTitle(config: GitHubConfig, number: number): Promise<string> {
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/issues/${number}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      Accept: 'application/vnd.github+json',
+    },
+  });
+  if (res.status === 404) {
+    throw new NotFoundError(`Issue #${number} não encontrada em ${config.owner}/${config.repo}.`);
+  }
+  if (!res.ok) throw new UpstreamError(`GitHub Issues API ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as { title?: string };
+  return json.title ?? '';
+}
+
+// Lê os corpos dos comentários de uma issue (REST). Usado para localizar a
+// referência estável a `docs/features/<slug>/` que o spec-wave comenta ao gerar
+// spec.md/plan.md — o slug ali é congelado na geração, sobrevivendo a
+// renomeações do título. Limita a 100 comentários (1 página). 404 → [].
+export async function fetchIssueComments(config: GitHubConfig, number: number): Promise<string[]> {
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/issues/${number}/comments?per_page=100`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      Accept: 'application/vnd.github+json',
+    },
+  });
+  if (res.status === 404) return [];
+  if (!res.ok) throw new UpstreamError(`GitHub Issues API ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as Array<{ body?: string }>;
+  return json.map((c) => c.body ?? '');
+}
+
+// Atualiza título/corpo de uma issue (REST PATCH). Só envia os campos presentes.
+// O token precisa de escopo de escrita em issues; 403 de permissão vira
+// UpstreamError com a mensagem do GitHub (visível no client). 404 → NotFound.
+export async function updateIssue(
+  config: GitHubConfig,
+  number: number,
+  patch: { title?: string; body?: string },
+): Promise<void> {
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/issues/${number}`;
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(patch),
+  });
+  if (res.status === 404) {
+    throw new NotFoundError(`Issue #${number} não encontrada em ${config.owner}/${config.repo}.`);
+  }
+  if (!res.ok) throw new UpstreamError(`GitHub Issues API ${res.status}: ${await res.text()}`);
+}
+
+// Cria uma issue (REST POST). `title` já vem com o prefixo de tipo ("[FEATURE] …")
+// e `labels` com o label de tipo correspondente. Labels inexistentes são criados
+// pelo próprio GitHub. Devolve o número e o node id (necessário para vincular a
+// sub-issue e adicionar ao Projects v2). Requer token com escrita em issues.
+export async function createIssue(
+  config: GitHubConfig,
+  input: { title: string; body: string; labels: string[] },
+): Promise<{ number: number; nodeId: string }> {
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/issues`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new UpstreamError(`GitHub Issues API ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as { number?: number; node_id?: string };
+  if (typeof json.number !== 'number' || typeof json.node_id !== 'string') {
+    throw new UpstreamError('GitHub Issues API: resposta de criação inesperada.');
+  }
+  return { number: json.number, nodeId: json.node_id };
+}
+
+// Lê o node id (global) e o título cru de uma issue (REST GET). O node id é
+// necessário para a mutation de sub-issue; o título alimenta a referência ao pai
+// no corpo da Feature criada. 404 → NotFound.
+export async function fetchIssueRef(
+  config: GitHubConfig,
+  number: number,
+): Promise<{ nodeId: string; title: string }> {
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/issues/${number}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      Accept: 'application/vnd.github+json',
+    },
+  });
+  if (res.status === 404) {
+    throw new NotFoundError(`Issue #${number} não encontrada em ${config.owner}/${config.repo}.`);
+  }
+  if (!res.ok) throw new UpstreamError(`GitHub Issues API ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as { node_id?: string; title?: string };
+  if (typeof json.node_id !== 'string') {
+    throw new UpstreamError('GitHub Issues API: resposta inesperada (sem node_id).');
+  }
+  return { nodeId: json.node_id, title: json.title ?? '' };
+}
+
+// Cria a relação de sub-issue nativa do GitHub (pai → filho) via GraphQL. Ambos os
+// argumentos são node ids de issue. Usa o preview `sub_issues` (mesmo header das
+// queries da subárvore). É o que faz a Feature aparecer sob o Épico.
+export async function addSubIssue(
+  config: GitHubConfig,
+  parentNodeId: string,
+  childNodeId: string,
+): Promise<void> {
+  const query = `
+    mutation AddSubIssue($issueId: ID!, $subIssueId: ID!) {
+      addSubIssue(input: { issueId: $issueId, subIssueId: $subIssueId }) {
+        subIssue { id number }
+      }
+    }`;
+  const res = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      'Content-Type': 'application/json',
+      'GraphQL-Features': 'sub_issues',
+    },
+    body: JSON.stringify({ query, variables: { issueId: parentNodeId, subIssueId: childNodeId } }),
+  });
+  if (!res.ok) throw new UpstreamError(`GitHub API ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as { errors?: { message: string }[] };
+  if (json.errors) {
+    throw new UpstreamError(`GitHub GraphQL: ${json.errors.map((e) => e.message).join('; ')}`);
+  }
+}
+
+// Adiciona um label a uma issue (REST). Idempotente no GitHub (re-adicionar é
+// no-op). Usado para disparar as Actions do spec-wave (spec-wave:spec/plan).
+export async function addLabel(config: GitHubConfig, number: number, label: string): Promise<void> {
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/issues/${number}/labels`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ labels: [label] }),
+  });
+  if (res.status === 404) {
+    throw new NotFoundError(`Issue #${number} não encontrada em ${config.owner}/${config.repo}.`);
+  }
+  if (!res.ok) throw new UpstreamError(`GitHub Issues API ${res.status}: ${await res.text()}`);
+}
+
+// Cria um comentário na issue (REST). Usado para registrar o prompt do usuário
+// no ciclo de refino de spec/plan.
+export async function createComment(
+  config: GitHubConfig,
+  number: number,
+  body: string,
+): Promise<void> {
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/issues/${number}/comments`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ body }),
+  });
+  if (res.status === 404) {
+    throw new NotFoundError(`Issue #${number} não encontrada em ${config.owner}/${config.repo}.`);
+  }
+  if (!res.ok) throw new UpstreamError(`GitHub Issues API ${res.status}: ${await res.text()}`);
+}
+
+// Lê o SHA atual de um arquivo (Contents API, metadados JSON). Necessário para
+// ATUALIZAR um arquivo existente via PUT. Arquivo inexistente → null (criação).
+async function fetchFileSha(config: GitHubConfig, path: string): Promise<string | null> {
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${path}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      Accept: 'application/vnd.github+json',
+    },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new UpstreamError(`GitHub Contents API ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as { sha?: string };
+  return json.sha ?? null;
+}
+
+// Cria/atualiza um arquivo no repositório (Contents API PUT) com commit direto na
+// branch padrão. Resolve o SHA do arquivo atual quando existe (update). O conteúdo
+// vai em base64. O token precisa de escopo de escrita em conteúdo (repo).
+export async function putFileContent(
+  config: GitHubConfig,
+  path: string,
+  content: string,
+  message: string,
+): Promise<void> {
+  const sha = await fetchFileSha(config, path);
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${path}`;
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      message,
+      content: Buffer.from(content, 'utf8').toString('base64'),
+      ...(sha ? { sha } : {}),
+    }),
+  });
+  if (!res.ok) throw new UpstreamError(`GitHub Contents API ${res.status}: ${await res.text()}`);
+}
+
+// --- Projects v2 ---
+
+// "https://github.com/orgs/<login>/projects/<n>" ou ".../users/<login>/projects/<n>"
+// → { kind, login, number }. Aceita também o número cru (usa o owner do repo como
+// login do tipo informado em `defaultKind`). Não parseável → null.
+export function parseProjectUrl(
+  value: string,
+): { kind: 'org' | 'user'; login: string; number: number } | null {
+  const m = value.match(/github\.com\/(orgs|users)\/([^/]+)\/projects\/(\d+)/i);
+  if (!m) return null;
+  const number = parseInt(m[3], 10);
+  if (!Number.isFinite(number)) return null;
+  return { kind: m[1].toLowerCase() === 'orgs' ? 'org' : 'user', login: m[2], number };
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+// Introspecta um Projects v2: id do projeto + campo single-select de etapa
+// ("Etapa", senão "Status") e suas opções (nome → id). Usado no cadastro do repo
+// para persistir os ids necessários a `moveProjectStage`.
+export async function fetchProjectFields(
+  config: GitHubConfig,
+  project: { kind: 'org' | 'user'; login: string; number: number },
+): Promise<ProjectConfig> {
+  const ownerField = project.kind === 'org' ? 'organization' : 'user';
+  const query = `
+    query ProjectFields($login: String!, $number: Int!) {
+      ${ownerField}(login: $login) {
+        projectV2(number: $number) {
+          id
+          fields(first: 50) {
+            nodes {
+              ... on ProjectV2SingleSelectField { id name options { id name } }
+            }
+          }
+        }
+      }
+    }`;
+  const res = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query, variables: { login: project.login, number: project.number } }),
+  });
+  if (!res.ok) throw new UpstreamError(`GitHub API ${res.status}: ${await res.text()}`);
+
+  const json = (await res.json()) as {
+    errors?: { message: string }[];
+    data?: Record<string, any>;
+  };
+  if (json.errors) {
+    throw new UpstreamError(`GitHub GraphQL: ${json.errors.map((e) => e.message).join('; ')}`);
+  }
+  const proj = json.data?.[ownerField]?.projectV2;
+  if (!proj?.id) {
+    throw new NotFoundError(
+      `Projects v2 #${project.number} não encontrado para ${project.kind} "${project.login}".`,
+    );
+  }
+
+  const fields: any[] = proj.fields?.nodes ?? [];
+  // Prefere o campo "Etapa"; cai para "Status"; senão o primeiro single-select com opções.
+  const byName = (re: RegExp) => fields.find((f) => f?.name && re.test(f.name) && f.options);
+  const etapa = byName(/etapa/i) ?? byName(/status/i) ?? fields.find((f) => f?.options);
+  if (!etapa?.id) {
+    throw new NotFoundError(
+      `Projeto #${project.number} não tem um campo de etapa (single-select) como "Etapa"/"Status".`,
+    );
+  }
+
+  const stageOptions: Record<string, string> = {};
+  for (const opt of etapa.options ?? []) {
+    if (opt?.name && opt?.id) stageOptions[opt.name] = opt.id;
+  }
+
+  return {
+    projectId: proj.id,
+    projectNumber: project.number,
+    etapaFieldId: etapa.id,
+    stageOptions,
+  };
+}
+
+// Resolve o id do ProjectV2Item de uma issue dentro de um projeto específico
+// (necessário para mutar o valor do campo). Ausente no projeto → null.
+export async function fetchProjectItemId(
+  config: GitHubConfig,
+  number: number,
+  projectId: string,
+): Promise<string | null> {
+  const query = `
+    query ProjectItem($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        issue(number: $number) {
+          projectItems(first: 20) { nodes { id project { id } } }
+        }
+      }
+    }`;
+  const res = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      query,
+      variables: { owner: config.owner, repo: config.repo, number },
+    }),
+  });
+  if (!res.ok) throw new UpstreamError(`GitHub API ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as { errors?: { message: string }[]; data?: Record<string, any> };
+  if (json.errors) {
+    throw new UpstreamError(`GitHub GraphQL: ${json.errors.map((e) => e.message).join('; ')}`);
+  }
+  const items: any[] = json.data?.repository?.issue?.projectItems?.nodes ?? [];
+  const match = items.find((it) => it?.project?.id === projectId);
+  return match?.id ?? null;
+}
+
+// Adiciona uma issue (pelo node id do conteúdo) ao Projects v2. Devolve o id do
+// item criado no board — necessário para depois setar os campos single-select.
+export async function addProjectItem(
+  config: GitHubConfig,
+  projectId: string,
+  contentId: string,
+): Promise<string> {
+  const query = `
+    mutation AddItem($projectId: ID!, $contentId: ID!) {
+      addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
+        item { id }
+      }
+    }`;
+  const res = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query, variables: { projectId, contentId } }),
+  });
+  if (!res.ok) throw new UpstreamError(`GitHub API ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as { errors?: { message: string }[]; data?: Record<string, any> };
+  if (json.errors) {
+    throw new UpstreamError(`GitHub GraphQL: ${json.errors.map((e) => e.message).join('; ')}`);
+  }
+  const itemId = json.data?.addProjectV2ItemById?.item?.id;
+  if (typeof itemId !== 'string') {
+    throw new UpstreamError('GitHub GraphQL: addProjectV2ItemById sem item id.');
+  }
+  return itemId;
+}
+
+// Resolve um campo single-select do Projects v2 pelo NOME (id + opções nome→id),
+// para campos que não são persistidos no SQLite (Work Item Type, Priority, Area).
+// Campo ausente → null (o caller trata como best-effort).
+export async function fetchSingleSelectField(
+  config: GitHubConfig,
+  projectId: string,
+  fieldName: string,
+): Promise<{ id: string; options: Record<string, string> } | null> {
+  const query = `
+    query GetField($projectId: ID!) {
+      node(id: $projectId) {
+        ... on ProjectV2 {
+          fields(first: 50) {
+            nodes {
+              ... on ProjectV2SingleSelectField { id name options { id name } }
+            }
+          }
+        }
+      }
+    }`;
+  const res = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query, variables: { projectId } }),
+  });
+  if (!res.ok) throw new UpstreamError(`GitHub API ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as { errors?: { message: string }[]; data?: Record<string, any> };
+  if (json.errors) {
+    throw new UpstreamError(`GitHub GraphQL: ${json.errors.map((e) => e.message).join('; ')}`);
+  }
+  const nodes: any[] = json.data?.node?.fields?.nodes ?? [];
+  const field = nodes.find((f) => f?.name === fieldName && f?.options);
+  if (!field?.id) return null;
+  const options: Record<string, string> = {};
+  for (const opt of field.options ?? []) {
+    if (opt?.name && opt?.id) options[opt.name] = opt.id;
+  }
+  return { id: field.id, options };
+}
+
+// Move a etapa (single-select) de um item do Projects v2 (mutation). `optionId`
+// vem de `ProjectConfig.stageOptions`.
+export async function moveProjectStage(
+  config: GitHubConfig,
+  projectId: string,
+  itemId: string,
+  fieldId: string,
+  optionId: string,
+): Promise<void> {
+  const query = `
+    mutation MoveStage($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+      updateProjectV2ItemFieldValue(input: {
+        projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+        value: { singleSelectOptionId: $optionId }
+      }) { projectV2Item { id } }
+    }`;
+  const res = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query, variables: { projectId, itemId, fieldId, optionId } }),
+  });
+  if (!res.ok) throw new UpstreamError(`GitHub API ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as { errors?: { message: string }[] };
+  if (json.errors) {
+    throw new UpstreamError(`GitHub GraphQL: ${json.errors.map((e) => e.message).join('; ')}`);
+  }
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */

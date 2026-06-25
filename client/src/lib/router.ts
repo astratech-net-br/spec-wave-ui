@@ -10,11 +10,15 @@ import type { Level } from '@spec-flow/shared';
 // o id do repositório (do SQLite), de onde o backend deriva owner/repo.
 export type Route =
   | { view: 'dashboard' }
+  | { view: 'repo-new' }
+  | { view: 'repo-edit'; repoId: number }
   | { view: 'repo-epics'; repoId: number }
   | { view: 'item'; repoId: number; level: Level; number: number };
 
 export const DASHBOARD_ROUTE: Route = { view: 'dashboard' };
 export const DASHBOARD_HREF = '#/dashboard';
+export const REPO_NEW_HREF = '#/repositories/new';
+export const hrefForRepoEdit = (repoId: number): string => `#/repositories/${repoId}/edit`;
 export const DEFAULT_ROUTE: Route = DASHBOARD_ROUTE;
 
 const LEVELS: Level[] = ['epic', 'feature', 'story'];
@@ -25,6 +29,11 @@ export function parseHash(hash: string): Route {
   const [a, b, c, d] = path.split('/');
 
   if (a === 'dashboard') return DASHBOARD_ROUTE;
+  if (a === 'repositories') {
+    if (b === 'new') return { view: 'repo-new' };
+    const repoId = parseInt(b, 10);
+    if (Number.isFinite(repoId) && c === 'edit') return { view: 'repo-edit', repoId };
+  }
 
   if (a === 'repos') {
     const repoId = parseInt(b, 10);

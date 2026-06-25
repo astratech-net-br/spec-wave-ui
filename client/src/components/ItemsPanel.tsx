@@ -1,13 +1,32 @@
-import type { ChildItem } from '@spec-flow/shared';
+import { useState } from 'react';
+import type { ChildItem, CreateFeatureRequest } from '@spec-flow/shared';
 import { ItemCard } from './ItemCard';
+import { NewFeatureForm } from './NewFeatureForm';
 
 interface ItemsPanelProps {
   items: ChildItem[];
   label: string; // "Features" | "Stories" | "Tasks"
   repoId: number; // escopa os links de drill-down dos cards
+  // Quando presente, habilita o "+ Adicionar" + form inline (hoje só Epic→Feature).
+  // Ausente = painel somente leitura (Stories/Tasks ainda não têm criação pela UI).
+  onCreate?: (input: CreateFeatureRequest) => Promise<void>;
 }
 
-export function ItemsPanel({ items, label, repoId }: ItemsPanelProps) {
+export function ItemsPanel({ items, label, repoId, onCreate }: ItemsPanelProps) {
+  const [adding, setAdding] = useState(false);
+
+  // Só fecha o form em sucesso; o erro é tratado (e exibido) dentro do form.
+  const handleSubmit = async (input: CreateFeatureRequest) => {
+    await onCreate!(input);
+    setAdding(false);
+  };
+
+  const addButton = (
+    <button type="button" className="btn btn--accent" onClick={() => setAdding(true)}>
+      + Adicionar
+    </button>
+  );
+
   return (
     <section aria-label={label}>
       <div className="features__head">
@@ -15,17 +34,17 @@ export function ItemsPanel({ items, label, repoId }: ItemsPanelProps) {
           <h2 className="h2">{label}</h2>
           <span className="count">{items.length}</span>
         </div>
-        <button type="button" className="btn btn--accent">
-          + Adicionar
-        </button>
+        {onCreate && !adding && addButton}
       </div>
+
+      {onCreate && adding && (
+        <NewFeatureForm onSubmit={handleSubmit} onCancel={() => setAdding(false)} />
+      )}
 
       {items.length === 0 ? (
         <div className="feature-empty">
           {`Nenhuma ${label.toLowerCase()} ainda`}
-          <button type="button" className="btn btn--accent">
-            + Adicionar
-          </button>
+          {onCreate && !adding && addButton}
         </div>
       ) : (
         <div className="feature-list">

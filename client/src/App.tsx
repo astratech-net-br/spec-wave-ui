@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { DASHBOARD_HREF, parseHash, type Route } from './lib/router';
 import { DashboardPage } from './components/DashboardPage';
+import { RepositoryFormPage } from './components/RepositoryFormPage';
 import { RepoEpicsScreen } from './components/RepoEpicsScreen';
 import { WorkItemScreen } from './components/WorkItemScreen';
 
@@ -19,6 +20,14 @@ export default function App() {
 
   if (route.view === 'dashboard') {
     return <DashboardPage />;
+  }
+
+  if (route.view === 'repo-new') {
+    return <RepositoryFormPage />;
+  }
+
+  if (route.view === 'repo-edit') {
+    return <RepositoryFormPage key={route.repoId} repoId={route.repoId} />;
   }
 
   if (route.view === 'repo-epics') {

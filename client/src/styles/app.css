@@ -414,6 +414,136 @@ button {
   color: var(--accent);
 }
 
+/* ----------------------------------------------------------- Edição inline */
+
+/* Botão-lápis que abre a edição de título/descrição. */
+.edit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-size: 13px;
+  flex-shrink: 0;
+  transition: border-color 0.15s, color 0.15s;
+}
+.edit-btn:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+/* Título: linha (texto + lápis) e modo de edição (input + ações). */
+.hero__title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 22px;
+}
+.hero__title-row .hero__title {
+  margin: 0;
+}
+.hero__title-edit {
+  margin: 0 0 22px;
+}
+
+/* Descrição (aba Feature): o lápis flutua à direita do cabeçalho. */
+.description__head .edit-btn {
+  margin-left: auto;
+}
+.description__edit {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Campos de edição. */
+.edit-input {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-raised);
+  color: var(--text);
+  font-family: inherit;
+}
+.edit-input--title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 28px;
+  line-height: 1.2;
+  letter-spacing: -0.5px;
+}
+.edit-input:focus,
+.edit-textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+.edit-textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-raised);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+/* Ações Salvar / Cancelar. */
+.edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.hero__title-edit .edit-actions {
+  margin-top: 10px;
+}
+.edit-save,
+.edit-cancel {
+  min-height: 32px;
+  padding: 6px 15px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 9px;
+  border: 1px solid var(--border-strong);
+  transition: border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+.edit-save {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.edit-save:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.edit-cancel {
+  background: var(--surface-raised);
+  color: var(--text-muted);
+}
+.edit-cancel:hover:not(:disabled) {
+  color: var(--text-2);
+  border-color: var(--border-hover);
+}
+.edit-save:disabled,
+.edit-cancel:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Mensagem de erro inline (mesmo tom de state-msg--error). */
+.edit-error {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #e6a484;
+}
+
 .mdx { color: var(--text-2); }
 
 .mdx p {
@@ -434,7 +564,8 @@ button {
   color: var(--text);
 }
 
-.mdx ul {
+.mdx ul,
+.mdx ol {
   list-style: none;
   margin: 0 0 20px;
   padding: 0;
@@ -445,6 +576,7 @@ button {
 
 .mdx li {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   font-size: 15.5px;
   line-height: 1.6;
@@ -456,6 +588,14 @@ button {
   color: var(--accent);
   font-weight: 700;
   flex-shrink: 0;
+}
+
+/* listas aninhadas — recuo hierárquico, em linha própria */
+.mdx li ul,
+.mdx li ol {
+  flex-basis: 100%; /* força a lista aninhada para a linha de baixo */
+  margin: 0; /* anula a margem inferior de 20px das listas de bloco */
+  padding-left: 18px; /* recuo que evidencia o nível */
 }
 
 /* checklist (critérios de aceite) — sobrescreve o marcador › */
@@ -836,6 +976,27 @@ button {
   white-space: nowrap;
 }
 
+.repo-card__edit {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-size: 13px;
+  text-decoration: none;
+  flex-shrink: 0;
+  transition: border-color 0.15s, color 0.15s;
+}
+.repo-card__edit:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
 .repo-card__url {
   font-family: var(--font-mono);
   font-size: 12.5px;
@@ -873,6 +1034,120 @@ button {
   margin: 0;
   font-size: 15px;
   color: var(--text-2);
+}
+
+/* ------------------------------------------------- Artefatos (Spec/Plan) */
+
+.artifact {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.artifact--empty {
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0 4px;
+}
+.artifact__hint {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+.artifact__bar,
+.artifact__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.artifact__bar {
+  justify-content: space-between;
+}
+.artifact__refine {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.artifact__label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+/* ----------------------------------------------- Formulário de repositório */
+
+.repo-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 560px;
+}
+.repo-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.repo-form__label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.repo-form__optional {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.repo-form__input {
+  width: 100%;
+  padding: 10px 13px;
+  border-radius: 9px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-raised);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+}
+.repo-form__input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+.repo-form__hint {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.repo-form__actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* Form inline de nova Feature (painel de Features da Epic View) */
+.new-feature {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface-raised);
+}
+.new-feature__textarea {
+  resize: vertical;
+  min-height: 64px;
+  line-height: 1.5;
+}
+.new-feature__row {
+  display: flex;
+  gap: 12px;
+}
+.new-feature__row .repo-form__field {
+  flex: 1;
+}
+
+@media (max-width: 767px) {
+  .new-feature__row { flex-direction: column; }
 }
 
 /* ----------------------------------------------------------- Responsivo */
