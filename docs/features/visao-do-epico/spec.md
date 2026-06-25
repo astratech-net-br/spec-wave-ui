@@ -11,8 +11,8 @@
 # Regras de Negócio
 1. Cada feature pertence exclusivamente a um épico
 2. Remoção de feature deve excluir todas stories e tasks vinculadas automaticamente
-3. [TODO: requer esclarecimento do PO] Limite máximo de features por épico
-4. [TODO: requer esclarecimento do PO] Regras de permissão para modificação de épicos
+3. Limite máximo de 20 features por épico
+4. Permissões: qualquer usuário autenticado pode modificar épicos
 
 # Fluxos
 ## Fluxo Principal (Happy Path)
