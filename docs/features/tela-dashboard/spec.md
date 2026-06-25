@@ -1,99 +1,151 @@
-# Objetivo
-Implementar a tela inicial (Dashboard) do sistema, exibindo uma lista de repositórios conectados com persistência local em SQLite. A tela deve ser responsiva, com estados de carregamento, lista vazia e tratamento de erros, além de permitir filtragem client-side dos repositórios.
+# Visão Geral
+**Objetivo:** Implementar uma Dashboard responsiva para exibição de repositórios conectados com persistência em SQLite, incluindo estados de carregamento, lista vazia e tratamento de erros, além de filtragem client-side.
+
+**Personas:**
+1. Desenvolvedor: Utiliza a dashboard para gerenciar repositórios conectados
+2. Administrador: Monitora integrações e dados armazenados
+
+**Critérios de Sucesso:**
+- Usuário visualiza lista de repositórios em até 2 segundos
+- Filtragem client-side responde em menos de 100ms
+- Estados de UI claros em todas as condições
+- Zero vulnerabilidades de segurança comprovadas
 
 # Regras de Negócio
-1. A rota `/dashboard` é a página inicial do sistema
-2. Repositórios devem ser armazenados em banco SQLite com estrutura:
-   - ID (auto-incremento)
-   - Nome (obrigatório, texto)
-   - URL (obrigatório, único, formato válido)
-   - Data de criação (automática, formato DATETIME)
-3. A listagem deve mostrar até 50 repositórios por página (paginação futura)
-4. Ordenação padrão: mais recentes primeiro
-5. Filtragem client-side por nome do repositório
-6. Estados obrigatórios de UI:
+1. Rota `/` redireciona para `/dashboard`
+2. Estrutura SQLite:
+   - ID (INTEGER PRIMARY KEY AUTOINCREMENT)
+   - Nome (TEXT NOT NULL)
+   - URL (TEXT NOT NULL UNIQUE)
+   - createdAt (DATETIME DEFAULT CURRENT_TIMESTAMP)
+3. Listagem máxima: 50 itens por página (paginação futura)
+4. Ordenação padrão: createdAt DESC
+5. Filtragem client-side por nome (case-insensitive)
+6. Estados de UI obrigatórios:
    - Carregamento (skeletons)
-   - Lista vazia (com call-to-action)
-   - Erro na requisição (com retry)
-7. Validação de URL no backend (regex padrão)
-8. Dados sensíveis (como chaves DB) devem vir de variáveis ambiente
+   - Lista vazia (com CTA)
+   - Erro (com retry)
+7. Validação de URL no backend (regex: `^(http|https)://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
+8. Dados sensíveis via variáveis ambiente
 
 # Fluxos
 **Fluxo Principal: Carregamento do Dashboard**
-1. Usuário acessa a aplicação (rota raiz)
-2. Sistema redireciona para `/dashboard`
-3. Frontend inicia requisição GET `/api/repositories`
-4. Backend consulta SQLite e retorna lista de repositórios
-5. Frontend renderiza lista em grid responsivo
-6. Usuário visualiza repositórios com nome, URL e data de conexão
+1. Acesso à rota raiz (`/`)
+2. Redirecionamento para `/dashboard`
+3. Requisição GET `/api/repositories`
+4. Backend consulta SQLite e retorna repositórios
+5. Renderização de grid responsivo com shadcn components
+6. Exibição de cards com nome, URL clicável e data formatada
 
 **Fluxo Alternativo: Filtragem de Repositórios**
-1. Usuário digita no campo de busca
-2. Frontend filtra lista existente (client-side) por correspondência no nome
-3. Sistema atualiza a exibição em tempo real
+1. Digitação no campo de busca
+2. Filtragem client-side por substring no nome
+3. Atualização imediata da lista (<100ms)
 
 **Fluxo de Erro: Falha na Requisição**
-1. Frontend detecta erro na chamada API
-2. Exibe mensagem de erro + botão "Tentar novamente"
-3. Ao clicar, refaz a requisição GET
+1. Detecção de erro na chamada API
+2. Exibição de componente de erro do shadcn
+3. Botão "Tentar novamente" refaz a requisição
 
 # Critérios de Aceite
-- [ ] Acessar rota `/` redireciona para `/dashboard`
-- [ ] Título "Repositórios Conectados" visível no topo da página
-- [ ] Exibição em grid/cards responsivo (mínimo 1 coluna mobile, 3 desktop)
-- [ ] Cada card mostra: nome, URL clicável, data formatada (ex: "12/05/2024 14:30")
-- [ ] Campo de busca que filtra repositórios por nome (client-side)
-- [ ] Botão "Conectar novo repositório" visível (roteia para rota futura)
-- [ ] Durante loading: exibir 5 skeletons de cards
-- [ ] Lista vazia: exibir ilustração + "Nenhum repositório encontrado" + botão "Adicionar repositório"
-- [ ] Estado de erro: exibir "Falha ao carregar dados" + botão "Tentar novamente"
-- [ ] Endpoint `GET /api/repositories` retorna status 200 com schema:
-  ```json
-  [{
-    "id": 1,
-    "name": "Meu Repositório",
-    "url": "https://github.com/user/repo",
-    "createdAt": "2024-05-12T14:30:00.000Z"
-  }]
-  ```
-- [ ] Banco SQLite com tabela `repositories` conforme schema
-- [ ] Backup automático diário do arquivo `database.db`
-- [ ] Validação de URL no backend (regex padrão HTTP/HTTPS)
-- [ ] Queries SQL parametrizadas (prevenção SQLi)
-- [ ] Frontend sanitiza exibição de URLs (prevenção XSS)
+```gherkin
+Funcionalidade: Dashboard de Repositórios
 
-# Casos de Erro
-- **Erro 500 no backend:** 
-  - Causa: Falha de conexão com SQLite
-  - Ação Frontend: Exibir estado de erro com retry
-- **Resposta API vazia:**
-  - Causa: Tabela de repositórios vazia
-  - Ação Frontend: Exibir estado de lista vazia
-- **URL inválida no banco:**
-  - Causa: Dados corrompidos ou migração falha
-  - Ação Frontend: Exibir "URL inválida" no campo afetado
-- **Timeout de requisição:**
-  - Causa: Backend não responde em 10s
-  - Ação Frontend: Cancelar requisição e exibir erro
-- **Violação de UNIQUE constraint:**
-  - Causa: URL duplicada (deverá ser tratada na feature de criação)
-  - Ação Backend: Logar erro mas não bloquear listagem
+Cenário: Acesso à página inicial
+  Dado que o usuário acessa a rota "/"
+  Quando ocorre o redirecionamento
+  Então deve carregar a rota "/dashboard"
+
+Cenário: Exibição de repositórios
+  Dado que existem repositórios cadastrados
+  Quando a página é carregada
+  Então exibe cards com:
+    | Elemento        | Detalhes                          |
+    | Título          | "Repositórios Conectados"         |
+    | Grid            | 1 coluna (mobile), 3 colunas (desktop) |
+    | Card            | Nome, URL clicável, data formatada (ex: "12/05/2024 14:30") |
+    | Botão           | "Conectar novo repositório" visível |
+
+Cenário: Filtragem client-side
+  Dado que existem 10 repositórios
+  Quando o usuário digita "api" no campo de busca
+  Então exibe apenas repositórios contendo "api" no nome
+
+Cenário: Estado de carregamento
+  Dado que a requisição está em andamento
+  Quando a página é carregada
+  Então exibe 5 skeletons de cards
+
+Cenário: Lista vazia
+  Dado que não existem repositórios
+  Quando a página é carregada
+  Então exibe:
+    | Componente       | Conteúdo                          |
+    | Ilustração       | SVG relevante                     |
+    | Mensagem         | "Nenhum repositório encontrado"   |
+    | Botão            | "Adicionar repositório"           |
+
+Cenário: Erro na requisição
+  Dado que a API retorna erro 500
+  Quando a página tenta carregar dados
+  Então exibe:
+    | Componente       | Conteúdo                          |
+    | Mensagem         | "Falha ao carregar dados"         |
+    | Botão            | "Tentar novamente"                |
+
+Cenário: Formato da resposta API
+  Dado que o endpoint /api/repositories é chamado
+  Quando a requisição é bem-sucedida
+  Então retorna 200 com schema JSON:
+    """
+    [{
+      "id": 1,
+      "name": "Meu Repositório",
+      "url": "https://github.com/user/repo",
+      "createdAt": "2024-05-12T14:30:00.000Z"
+    }]
+    """
+```
 
 # Dependências
-- **Frontend:**
-  - React Router (roteamento)
-  - React Query/SWR (data fetching)
-  - Material-UI/ChakraUI (componentes)
+**Internas:**
+- Frontend:
+  - React Router v6 (roteamento)
+  - TanStack Query v4 (data fetching)
+  - shadcn/ui (componentes)
   - date-fns (formatação de datas)
-- **Backend:**
-  - Express.js (servidor)
-  - Knex.js/TypeORM (ORM)
-  - SQLite3 (driver do banco)
+  - Tailwind CSS (estilização)
+- Backend:
+  - Express.js (servidor web)
+  - Knex.js (query builder)
+  - SQLite3 (driver de banco)
   - Winston (logging)
-- **Banco de Dados:**
-  - Arquivo `database.db` com permissões de escrita
-  - Git LFS para backup (se incluído no repositório)
-- **Infra:**
+
+**Externas:**
+- Banco de Dados:
+  - Arquivo `database.db` com permissões RW
+  - Backup automático diário (cron job)
+- Infra:
   - Node.js v18+
-  - Script de backup diário (cron job)
-  - Variáveis ambiente para configuração do DB
+  - Variáveis ambiente para:
+    - Caminho do arquivo DB
+    - Chaves de criptografia
+
+# Requisitos Não-Funcionais
+**Performance:**
+- Carregamento inicial < 2s (página + dados)
+- Filtragem client-side < 100ms (10k itens)
+- TTFB < 500ms (endpoint /api/repositories)
+
+**Segurança:**
+- Sanitização de output (prevenção XSS)
+- Queries parametrizadas (prevenção SQLi)
+- Validação estrita de schema de entrada
+- CORS restrito a origens autorizadas
+
+**Usabilidade:**
+- Responsividade: Mobile (320px) a Desktop (1920px)
+- Índice de contraste AA+ (WCAG 2.1)
+- Navegação por teclado (tabindex ordenado)
+- Feedback visual imediato em interações
+- Mensagens de erro claras e acionáveis
