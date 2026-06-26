@@ -1,69 +1,152 @@
-```markdown
 # Estratégia Técnica
-**Abordagem Arquitetural:**  
-Extensão da arquitetura monolítica existente com novos endpoints REST no backend e componentes React no frontend. Dados persistidos exclusivamente via GitHub Issues, utilizando GraphQL/REST APIs. O backend atua como proxy seguro para GitHub, mantendo o frontend como consumidor de JSON.
 
-**Decisões-Chave:**  
-1. Operações de escrita via GitHub GraphQL API (criação/remoção hierárquica de issues)  
-2. Validação de limite de features no backend antes de criar novas  
-3. Exclusão em cascata implementada via travessia DFS pós-ordem (tasks → stories → feature)  
-4. Frontend calcula impacto de remoção localmente a partir dos dados já carregados  
+## Abordagem Arquitetural
+Implementaremos uma solução fullstack que estende a API existente para suportar operações de CRUD em features dentro de épicos. O backend atuará como proxy para as operações no GitHub via GraphQL API, enquanto o frontend fornecerá uma interface intuitiva para gestão visual dos épicos e suas features.
 
-**Matriz de Rastreabilidade:**  
+**Decisões-Chave:**
+1. Utilizar mutações GraphQL do GitHub para criar/remover issues (features) mantendo a consistência com a estrutura existente
+2. Implementar transações lógicas no backend para garantir atomicidade nas operações de remoção em cascata
+3. Manter o frontend como consumidor de API JSON, sem lógica de negócio direta com GitHub
 
-| Critério de Aceite                     | Componente Técnico                                                                 |
-|----------------------------------------|------------------------------------------------------------------------------------|
-| Adição bem-sucedida de feature         | POST /api/repositories/:repoId/epics/:epicNumber/features + FeatureForm (UI)      |
-| Remoção de feature com dependências    | DELETE /api/repositories/:repoId/epics/:epicNumber/features/:featureNumber + DeleteConfirmationModal (UI) |
-| Tentativa de remoção com falha de rede | Error handling em useMutation (frontend) + Retry mechanism (UI)                   |
+## Matriz de Rastreabilidade
+
+| Critério de Aceite | Componente Técnico | Endpoint/Componente |
+|-------------------|-------------------|---------------------|
+| Adição bem-sucedida de feature | Backend API + Frontend Component | POST /api/epics/{id}/features + EpicFeaturesManager.tsx |
+| Remoção de feature com dependências | Backend Service + GitHub API | DELETE /api/features/{id} + GitHubGraphQLService |
+| Tentativa de remoção com falha de rede | Error Handling Middleware | ErrorBoundary + ToastService |
 
 # Detalhamento da Implementação
+
 ## Backend
-**Novos Endpoints (em `server/src/routes/repositoryRoutes.ts`):**  
-1. `POST /api/repositories/:repoId/epics/:epicNumber/features`  
-   - **Request Body:** `CreateFeatureDto { name: string; description?: string }`  
-   - **Validações:**  
-     - `name` obrigatório (retorna 400 se vazio)  
-     - Verifica limite de 20 features (via contagem de issues filhas no GitHub)  
-   - **Fluxo:**  
-     1. Cria issue no GitHub via `createIssue` mutation (tipo feature)  
-     2. Atualiza parentesco com épico via `updateIssue` mutation  
-     3. Rollback automático se passo 2 falhar (exclui issue criada)  
-   - **Respostas:**  
-     - 201 Created + `WorkItemView` (AC1)  
-     - 400 Bad Request (limite excedido/dados inválidos)  
 
-2. `DELETE /api/repositories/:repoId/epics/:epicNumber/features/:featureNumber`  
-   - **Fluxo:**  
-     1. Obtém árvore de dependências via GraphQL (feature → stories → tasks)  
-     2. Exclui em ordem inversa (tasks → stories → feature) via `deleteIssue`  
-     3. Transação simulada: interrompe e reporta erro a qualquer falha  
-   - **Respostas:**  
-     - 204 No Content (AC2)  
-     - 502 Bad Gateway (falha GitHub) (AC3)  
+**Novos Endpoints:**
+- `POST /api/epics/{epicId}/features` - Criar nova feature no épico
+  - Body: `{ name: string, description: string }`
+  - Validação: nome obrigatório, limite de 20 features por épico
+  - Referência: Critério "Adição bem-sucedida de feature"
 
-**Camada de Serviço:**  
-- `FeatureService.createFeature()`: Implementa lógica de criação em 2 passos  
-- `FeatureService.deleteFeatureWithDependencies()`: DFS pós-ordem para exclusão  
+- `DELETE /api/features/{featureId}` - Remover feature e dependências
+  - Query Params: `?confirm=true` (para confirmação explícita)
+  - Referência: Critério "Remoção de feature com dependências"
+
+**Serviços:**
+- `GitHubFeatureService` (src/lib/githubFeatureService.ts)
+  - `createFeature(epicId: number, featureData: FeatureCreateDTO)`
+  - `deleteFeatureWithDependencies(featureId: number)`
+
+**DTOs:**
+```typescript
+interface FeatureCreateDTO {
+  name: string;
+  description?: string;
+}
+
+interface FeatureDeleteResponse {
+  deletedFeature: boolean;
+  deletedStories: number;
+  deletedTasks: number;
+}
+```
 
 ## Banco de Dados
-- **Zero alterações de schema:** Utiliza-se exclusivamente GitHub Issues como armazenamento  
-- **Constraints via código:**  
-  - Limite 20 features: Validação via contagem GraphQL antes de inserção  
-  - Integridade hierárquica: Garantida por mutations atômicas no GraphQL  
-- **Transações:** Simuladas via rollback manual em falhas (create) e sequência ordenada (delete)  
+
+**Estrutura Existente (aproveitamento):**
+- Utilizar tabela `repositories` para mapeamento dos repositórios GitHub
+- Manter estrutura de issues do GitHub como fonte de verdade (não persistir localmente)
+
+**Constraints Implementadas:**
+- Validação de limite de 20 features por épico via contagem de issues do tipo "feature"
+- Transação lógica para remoção em cascata via múltiplas mutações GraphQL
 
 ## Frontend
-**Componentes (em `client/src/views/EpicDetail/`):**  
-1. `FeatureForm.tsx` (Novo)  
-   - Campos: Nome (obrigatório), Descrição (opcional)  
-   - Validação em tempo real com mensagens específicas (AC1)  
-   - Submete via `useMutation` para endpoint POST  
 
-2. `DeleteConfirmationModal.tsx` (Novo)  
-   - Exibe contagem de stories/tasks (calculada a partir do estado local) (AC2)  
-   - Botões: "Confirmar" (chama DELETE) / "Cancelar" (fecha modal) (Alternativo 2)  
+**Novos Componentes:**
+- `EpicFeaturesManager` (src/components/EpicFeaturesManager.tsx)
+  - Listagem de features do épico
+  - Botões de adicionar/remover features
+  - Referência: Critério "Adição bem-sucedida de feature"
 
-**Integração:**  
-- Botão "Adicionar Feature" no `EpicDetail.tsx` abre `FeatureForm`  
-- Ícone "
+- `FeatureFormModal` (src/components/FeatureFormModal.tsx)
+  - Formulário para criação de nova feature
+  - Validação em tempo real dos campos obrigatórios
+
+- `DeleteConfirmationModal` (src/components/DeleteConfirmationModal.tsx)
+  - Modal de confirmação com contagem de dependências
+  - Referência: Fluxo Alternativo 1 - Remoção de Feature
+
+**Serviços Frontend:**
+- `featureService` (src/services/featureService.ts)
+  - `createFeature(epicId, data)`
+  - `deleteFeature(featureId)`
+  - Tratamento de erros de rede com retentativa
+
+## Infraestrutura
+
+**Configurações Existentes:**
+- Manter estrutura monorepo com workspaces npm
+- Build estático do Vite servido pelo Express
+- Rate limiting de 120 req/min por IP
+
+**Novas Dependências:**
+- Nenhuma nova dependência necessária (aproveitamento do stack existente)
+
+# Segurança e Conformidade
+
+**Autenticação:**
+- Todas as operações usam GITHUB_TOKEN do ambiente server (nunca exposto ao frontend)
+- Validação de permissões de escrita no repositório via GitHub API
+
+**Validações:**
+- Sanitização de inputs para prevenir injection attacks
+- Validação de ownership: usuário só pode modificar épicos de repositórios acessíveis
+
+**Logs de Auditoria:**
+- Winston logger para registrar todas as operações de criação/remoção
+- Logs incluem: timestamp, usuário (via GitHub context), ação realizada
+
+**Conformidade WCAG AA:**
+- Labels acessíveis para todos os controles de formulário
+- Feedback auditível para operações críticas (remoções)
+- Navegação por teclado nos modais de confirmação
+
+# Estratégia de Testes
+
+## Testes Unitários
+- `GitHubFeatureService` - Testes de criação e remoção de features
+- `FeatureFormModal` - Validação de formulário e estados de UI
+- Validação de limites (máximo 20 features por épico)
+
+## Testes de Integração
+- API endpoints com mocking do GitHub GraphQL
+- Testes de transação na remoção em cascata
+- Cenários de erro de rede e timeout
+
+## Testes E2E
+- Fluxo completo de adição de feature (Playwright)
+- Fluxo de remoção com confirmação
+- Cenários de erro e retentativa
+- Testes de acessibilidade com axe-core
+
+**Cobertura Alvo:** 85% para serviços críticos, 70% para componentes UI
+
+# Rollback e Monitoramento
+
+## Plano de Rollback
+1. **Rollback Imediato:** Reversão do deploy em caso de falhas críticas
+2. **Rollback de Dados:** Script de restauração via GitHub API (reabrir issues deletadas)
+3. **Procedimento:** 
+   - Desativar endpoints problemáticos
+   - Executar script de recuperação `recover-features.js`
+   - Notificar usuários sobre interrupção temporária
+
+## Métricas Observadas
+- `feature_create_success_rate` - Taxa de sucesso na criação
+- `feature_delete_cascade_time` - Tempo médio de remoção em cascata
+- `epic_view_load_time` - Tempo de carregamento da visão do épico (alvo ≤1.5s)
+- `api_error_rate` - Taxa de erro dos endpoints de features
+
+## Alertas
+- **Crítico:** Error rate > 5% por mais de 5 minutos
+- **Warning:** Tempo de remoção > 800ms consistentemente
+- **Info:** Tentativas de exceder limite de 20 features por épico
