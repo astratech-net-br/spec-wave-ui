@@ -14,6 +14,7 @@ import {
   updateRepositoryWorkItem,
 } from '../controllers/WorkItemController.ts';
 import {
+  approveFeaturePlan,
   createFeatureArtifact,
   refineFeatureArtifact,
   saveFeatureArtifact,
@@ -63,4 +64,10 @@ repositoryRoutes.post(
 repositoryRoutes.post(
   '/repositories/:id/workitems/feature/:number/:artifact/save',
   saveFeatureArtifact,
+);
+
+// Aprovação do plan.md: aplica o label spec-wave:ready na Feature.
+repositoryRoutes.post(
+  '/repositories/:id/workitems/feature/:number/plan/approve',
+  approveFeaturePlan,
 );

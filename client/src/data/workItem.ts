@@ -127,6 +127,16 @@ export async function createArtifact(
   return postForView(`${artifactBase(repoId, number, kind)}/create`, {}, REQUEST_TIMEOUT_MS);
 }
 
+// Aprova o plano: aplica o label spec-wave:ready na Feature e devolve o
+// WorkItemView recarregado.
+export async function approvePlan(repoId: number, number: number): Promise<WorkItemView> {
+  return postForView(
+    `/api/repositories/${repoId}/workitems/feature/${number}/plan/approve`,
+    {},
+    REQUEST_TIMEOUT_MS,
+  );
+}
+
 // Cria uma Feature sob o épico (issue [FEATURE] + vínculo de sub-issue + board)
 // e devolve o WorkItemView do épico recarregado — o caller troca a view inteira.
 export async function createFeature(
