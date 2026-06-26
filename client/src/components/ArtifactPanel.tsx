@@ -12,7 +12,13 @@ import { useEffect, useRef, useState } from 'react';
 import type { ArtifactKind, WorkItemView } from '@spec-flow/shared';
 import { Mdx } from './Mdx';
 import { EditError } from './EditControls';
-import { createArtifact, fetchWorkItem, refineArtifact, saveArtifact } from '../data/workItem';
+import {
+  approvePlan,
+  createArtifact,
+  fetchWorkItem,
+  refineArtifact,
+  saveArtifact,
+} from '../data/workItem';
 
 interface ArtifactPanelProps {
   kind: ArtifactKind;
@@ -44,6 +50,7 @@ export function ArtifactPanel({
   const [phase, setPhase] = useState<Phase>({ t: 'idle' });
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [approving, setApproving] = useState(false);
   const label = LABEL[kind];
 
   const hasContent = content != null && content.trim().length > 0;
@@ -125,6 +132,20 @@ export function ArtifactPanel({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase(previous);
+    }
+  };
+
+  // Aprova o plano: aplica o label spec-wave:ready. Só disponível na aba Plan com
+  // conteúdo salvo (plan.md existe).
+  const onApprove = async () => {
+    setError(null);
+    setApproving(true);
+    try {
+      applyView(await approvePlan(repoId, featureNumber));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setApproving(false);
     }
   };
 
@@ -243,6 +264,16 @@ export function ArtifactPanel({
               >
                 Solicitar alteração
               </button>
+              {kind === 'plan' && (
+                <button
+                  type="button"
+                  className="btn btn--accent"
+                  onClick={onApprove}
+                  disabled={approving}
+                >
+                  {approving ? 'Aprovando…' : 'Aprovar Plano'}
+                </button>
+              )}
             </div>
           )}
           <EditError message={error} />

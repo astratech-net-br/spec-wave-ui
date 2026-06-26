@@ -5,6 +5,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import type { ArtifactKind } from '@spec-flow/shared';
 import {
+  approvePlan,
   createArtifact,
   refineArtifact,
   saveArtifact,
@@ -37,6 +38,26 @@ function parseParams(
   return { repoId, number: n, kind: artifact as ArtifactKind };
 }
 
+// Valida { repoId, number } da rota (sem :artifact). Em erro, responde 400 e null.
+function parseRepoAndNumber(
+  req: Request,
+  res: Response,
+): { repoId: number; number: number } | null {
+  const { id, number } = req.params;
+
+  const repoId = Number(id);
+  if (!Number.isInteger(repoId) || repoId <= 0) {
+    res.status(400).json({ error: `Repositório inválido: "${id}".` });
+    return null;
+  }
+  const n = Number(number);
+  if (!Number.isInteger(n) || n <= 0) {
+    res.status(400).json({ error: `Número inválido: "${number}".` });
+    return null;
+  }
+  return { repoId, number: n };
+}
+
 function handleError(err: unknown, res: Response, next: NextFunction): void {
   if (err instanceof HttpError) {
     res.status(err.status).json({ error: err.message });
@@ -55,6 +76,21 @@ export async function createFeatureArtifact(
   if (!p) return;
   try {
     res.json(await createArtifact(p.repoId, p.number, p.kind));
+  } catch (err) {
+    handleError(err, res, next);
+  }
+}
+
+// POST .../workitems/feature/:number/plan/approve → aplica spec-wave:ready.
+export async function approveFeaturePlan(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const p = parseRepoAndNumber(req, res);
+  if (!p) return;
+  try {
+    res.json(await approvePlan(p.repoId, p.number));
   } catch (err) {
     handleError(err, res, next);
   }

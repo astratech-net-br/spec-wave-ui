@@ -30,6 +30,9 @@ const LABEL: Record<ArtifactKind, string> = {
   plan: 'spec-wave:plan',
 };
 
+// Label que sinaliza que o plan.md foi aprovado e a Feature está pronta.
+const READY_LABEL = 'spec-wave:ready';
+
 // Título da issue (para o slug de fallback). Best-effort — em falha devolve ''.
 async function fetchTitleSafe(config: GitHubConfig, number: number): Promise<string> {
   try {
@@ -81,6 +84,15 @@ export async function createArtifact(
   const config = configForRepository(await getRepositoryOr404(id));
   await addLabel(config, number, LABEL[kind]);
   await moveStage(config, number, kind);
+  return loadWorkItem(config, 'feature', number);
+}
+
+// approvePlan: aplica o label de aprovação (spec-wave:ready) na Feature e devolve
+// o WorkItemView recarregado. Idempotente (addLabel não duplica). Pré-condição de
+// existência do plan.md é checada na UI; aqui só aplicamos o label.
+export async function approvePlan(id: number, number: number): Promise<WorkItemView> {
+  const config = configForRepository(await getRepositoryOr404(id));
+  await addLabel(config, number, READY_LABEL);
   return loadWorkItem(config, 'feature', number);
 }
 
