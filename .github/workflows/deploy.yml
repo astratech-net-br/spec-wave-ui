@@ -1,0 +1,46 @@
+# Deploy contínuo (main → conta 458889634344) via OIDC — sem access keys.
+#
+# Pré-requisitos (uma vez):
+#   1. cdk deploy SpecWaveCicd -c githubRepo=<org/repo>  → output DeployRoleArn
+#   2. Variáveis do repositório (Settings → Variables → Actions):
+#      SPEC_WAVE_DEPLOY_ROLE_ARN, SPEC_WAVE_GH_APP_ID, SPEC_WAVE_GH_APP_SLUG,
+#      SPEC_WAVE_APP_URL, SPEC_WAVE_COGNITO_DOMAIN, SPEC_WAVE_COGNITO_CLIENT_ID
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency: deploy-production
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build do client (config Cognito de produção)
+        run: npm run build
+        env:
+          VITE_COGNITO_DOMAIN: ${{ vars.SPEC_WAVE_COGNITO_DOMAIN }}
+          VITE_COGNITO_CLIENT_ID: ${{ vars.SPEC_WAVE_COGNITO_CLIENT_ID }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.SPEC_WAVE_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: CDK deploy
+        working-directory: infra
+        run: |
+          npx cdk deploy --all --require-approval never \
+            -c githubAppId='${{ vars.SPEC_WAVE_GH_APP_ID }}' \
+            -c githubAppSlug='${{ vars.SPEC_WAVE_GH_APP_SLUG }}' \
+            -c appUrl='${{ vars.SPEC_WAVE_APP_URL }}' \
+            -c githubRepo='${{ github.repository }}'

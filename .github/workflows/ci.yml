@@ -1,0 +1,33 @@
+# CI do SaaS: typecheck, testes de isolamento (dynamodb-local), build e synth.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    services:
+      dynamodb:
+        image: amazon/dynamodb-local
+        ports:
+          - 8000:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Testes (isolamento entre tenants)
+        run: npm -w server test
+        env:
+          DYNAMODB_ENDPOINT: http://localhost:8000
+      - name: Build do client
+        run: npm run build
+      - name: CDK synth
+        working-directory: infra
+        run: npx cdk synth --quiet
