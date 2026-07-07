@@ -11,7 +11,7 @@ import { createRepository, fetchRepository, updateRepository } from '../data/rep
 import { DASHBOARD_HREF } from '../lib/router';
 
 interface RepositoryFormPageProps {
-  repoId?: number; // presente = edição
+  repoId?: string; // presente = edição
 }
 
 type Load = { phase: 'loading' } | { phase: 'error'; message: string } | { phase: 'ready' };

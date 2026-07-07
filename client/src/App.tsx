@@ -4,6 +4,8 @@ import { DashboardPage } from './components/DashboardPage';
 import { RepositoryFormPage } from './components/RepositoryFormPage';
 import { RepoEpicsScreen } from './components/RepoEpicsScreen';
 import { WorkItemScreen } from './components/WorkItemScreen';
+import { SettingsPage } from './components/SettingsPage';
+import { InviteAcceptPage } from './components/InviteAcceptPage';
 
 export default function App() {
   const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash));
@@ -20,6 +22,14 @@ export default function App() {
 
   if (route.view === 'dashboard') {
     return <DashboardPage />;
+  }
+
+  if (route.view === 'settings') {
+    return <SettingsPage />;
+  }
+
+  if (route.view === 'invite') {
+    return <InviteAcceptPage key={route.code} code={route.code} />;
   }
 
   if (route.view === 'repo-new') {

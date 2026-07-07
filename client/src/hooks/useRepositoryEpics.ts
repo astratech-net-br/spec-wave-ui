@@ -16,7 +16,7 @@ export interface UseRepositoryEpics {
   retry: () => void;
 }
 
-export function useRepositoryEpics(repoId: number): UseRepositoryEpics {
+export function useRepositoryEpics(repoId: string): UseRepositoryEpics {
   const [state, setState] = useState<EpicsState>({ phase: 'loading' });
   const [nonce, setNonce] = useState(0);
 

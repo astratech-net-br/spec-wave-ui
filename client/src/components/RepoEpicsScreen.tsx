@@ -6,7 +6,7 @@ import { DASHBOARD_HREF } from '../lib/router';
 import { EpicCard } from './EpicCard';
 
 interface RepoEpicsScreenProps {
-  repoId: number;
+  repoId: string;
 }
 
 function EpicsSkeleton() {

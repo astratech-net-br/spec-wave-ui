@@ -6,7 +6,7 @@ import { STATUS_MAP } from '../lib/status';
 import { hrefForItem } from '../lib/router';
 
 interface EpicCardProps {
-  repoId: number;
+  repoId: string;
   epic: EpicSummary;
 }
 

@@ -7,7 +7,7 @@ import { ProgressBar } from './ProgressBar';
 
 interface ItemCardProps {
   item: ChildItem;
-  repoId: number;
+  repoId: string;
 }
 
 // Envolve o card num link quando há drill-down (Feature/Story); folhas (Task) não.

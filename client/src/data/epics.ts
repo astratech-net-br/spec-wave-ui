@@ -3,6 +3,7 @@
 // proxy de /api para a porta 3001 (veja vite.config.ts).
 
 import type { RepositoryEpics } from '@spec-flow/shared';
+import { apiFetch } from './apiFetch';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -27,7 +28,7 @@ async function errorMessage(res: Response): Promise<string> {
 }
 
 export async function fetchRepositoryEpics(
-  repoId: number,
+  repoId: string,
   signal?: AbortSignal,
 ): Promise<RepositoryEpics> {
   const timeout = new AbortController();
@@ -36,7 +37,7 @@ export async function fetchRepositoryEpics(
   signal?.addEventListener('abort', onExternalAbort);
 
   try {
-    const res = await fetch(`/api/repositories/${repoId}/epics`, {
+    const res = await apiFetch(`/api/repositories/${repoId}/epics`, {
       headers: { Accept: 'application/json' },
       signal: timeout.signal,
     });

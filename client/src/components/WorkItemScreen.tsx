@@ -19,7 +19,7 @@ type State =
   | { phase: 'ready'; view: WorkItemView };
 
 interface WorkItemScreenProps {
-  repoId: number;
+  repoId: string;
   level: Level;
   number: number;
 }
@@ -115,6 +115,7 @@ export function WorkItemScreen({ repoId, level, number }: WorkItemScreenProps) {
             source={view.descriptionMdx}
             spec={view.specMdx}
             plan={view.planMdx}
+            planApproved={view.planApproved}
             onSave={handleSave}
             applyView={applyView}
           />

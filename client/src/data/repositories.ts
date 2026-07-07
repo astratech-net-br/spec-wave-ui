@@ -7,6 +7,7 @@ import type {
   Repository,
   UpdateRepositoryRequest,
 } from '@spec-flow/shared';
+import { apiFetch } from './apiFetch';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -14,7 +15,7 @@ function isRepository(value: unknown): value is Repository {
   if (typeof value !== 'object' || value === null) return false;
   const r = value as Record<string, unknown>;
   return (
-    typeof r.id === 'number' &&
+    typeof r.id === 'string' &&
     typeof r.name === 'string' &&
     typeof r.url === 'string' &&
     typeof r.createdAt === 'string'
@@ -29,7 +30,7 @@ export async function fetchRepositories(signal?: AbortSignal): Promise<Repositor
   signal?.addEventListener('abort', onExternalAbort);
 
   try {
-    const res = await fetch('/api/repositories', {
+    const res = await apiFetch('/api/repositories', {
       headers: { Accept: 'application/json' },
       signal: timeout.signal,
     });
@@ -77,7 +78,7 @@ async function repositoryRequest(
   signal?.addEventListener('abort', onExternalAbort);
 
   try {
-    const res = await fetch(url, {
+    const res = await apiFetch(url, {
       method,
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(payload),
@@ -113,7 +114,7 @@ export async function createRepository(
 
 // Edita um repositório (url e/ou vínculo com o Projects v2). Devolve o atualizado.
 export async function updateRepository(
-  id: number,
+  id: string,
   input: UpdateRepositoryRequest,
   signal?: AbortSignal,
 ): Promise<Repository> {
@@ -121,14 +122,14 @@ export async function updateRepository(
 }
 
 // Busca um repositório pelo id (pré-preenche a edição).
-export async function fetchRepository(id: number, signal?: AbortSignal): Promise<Repository> {
+export async function fetchRepository(id: string, signal?: AbortSignal): Promise<Repository> {
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(), REQUEST_TIMEOUT_MS);
   const onExternalAbort = () => timeout.abort();
   signal?.addEventListener('abort', onExternalAbort);
 
   try {
-    const res = await fetch(`/api/repositories/${id}`, {
+    const res = await apiFetch(`/api/repositories/${id}`, {
       headers: { Accept: 'application/json' },
       signal: timeout.signal,
     });

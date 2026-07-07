@@ -15,6 +15,7 @@ import { EditError } from './EditControls';
 import {
   approvePlan,
   createArtifact,
+  decomposeFeature,
   fetchWorkItem,
   refineArtifact,
   saveArtifact,
@@ -23,9 +24,10 @@ import {
 interface ArtifactPanelProps {
   kind: ArtifactKind;
   content: string | null;
-  repoId: number;
+  repoId: string;
   featureNumber: number;
   applyView: (view: WorkItemView) => void;
+  planApproved?: boolean;
 }
 
 type Phase =
@@ -46,11 +48,13 @@ export function ArtifactPanel({
   repoId,
   featureNumber,
   applyView,
+  planApproved,
 }: ArtifactPanelProps) {
   const [phase, setPhase] = useState<Phase>({ t: 'idle' });
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
+  const [decomposing, setDecomposing] = useState(false);
   const label = LABEL[kind];
 
   const hasContent = content != null && content.trim().length > 0;
@@ -146,6 +150,18 @@ export function ArtifactPanel({
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setApproving(false);
+    }
+  };
+
+  const onDecompose = async () => {
+    setError(null);
+    setDecomposing(true);
+    try {
+      applyView(await decomposeFeature(repoId, featureNumber));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDecomposing(false);
     }
   };
 
@@ -264,7 +280,7 @@ export function ArtifactPanel({
               >
                 Solicitar alteração
               </button>
-              {kind === 'plan' && (
+              {kind === 'plan' && !planApproved && (
                 <button
                   type="button"
                   className="btn btn--accent"
@@ -272,6 +288,16 @@ export function ArtifactPanel({
                   disabled={approving}
                 >
                   {approving ? 'Aprovando…' : 'Aprovar Plano'}
+                </button>
+              )}
+              {kind === 'plan' && planApproved && (
+                <button
+                  type="button"
+                  className="btn btn--accent"
+                  onClick={onDecompose}
+                  disabled={decomposing}
+                >
+                  {decomposing ? 'Criando…' : 'Criar User Storys'}
                 </button>
               )}
             </div>

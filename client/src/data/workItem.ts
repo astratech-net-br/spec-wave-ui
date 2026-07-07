@@ -10,6 +10,7 @@ import type {
   WorkItemPatch,
   WorkItemView,
 } from '@spec-flow/shared';
+import { apiFetch } from './apiFetch';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 // Criar a feature encadeia várias chamadas ao GitHub (issue + sub-issue + board).
@@ -40,7 +41,7 @@ async function errorMessage(res: Response): Promise<string> {
 }
 
 export async function fetchWorkItem(
-  repoId: number,
+  repoId: string,
   level: Level,
   number: number,
   signal?: AbortSignal,
@@ -52,7 +53,7 @@ export async function fetchWorkItem(
   signal?.addEventListener('abort', onExternalAbort);
 
   try {
-    const res = await fetch(`/api/repositories/${repoId}/workitems/${level}/${number}`, {
+    const res = await apiFetch(`/api/repositories/${repoId}/workitems/${level}/${number}`, {
       headers: { Accept: 'application/json' },
       signal: timeout.signal,
     });
@@ -89,7 +90,7 @@ async function postForView(
   signal?.addEventListener('abort', onExternalAbort);
 
   try {
-    const res = await fetch(url, {
+    const res = await apiFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: payload === undefined ? undefined : JSON.stringify(payload),
@@ -114,13 +115,13 @@ async function postForView(
   }
 }
 
-const artifactBase = (repoId: number, number: number, kind: ArtifactKind): string =>
+const artifactBase = (repoId: string, number: number, kind: ArtifactKind): string =>
   `/api/repositories/${repoId}/workitems/feature/${number}/${kind}`;
 
 // Cria o artefato: aplica o label do spec-wave + move a etapa. A geração do
 // arquivo fica a cargo da GitHub Action — o caller faz o poll de fetchWorkItem.
 export async function createArtifact(
-  repoId: number,
+  repoId: string,
   number: number,
   kind: ArtifactKind,
 ): Promise<WorkItemView> {
@@ -129,9 +130,18 @@ export async function createArtifact(
 
 // Aprova o plano: aplica o label spec-wave:ready na Feature e devolve o
 // WorkItemView recarregado.
-export async function approvePlan(repoId: number, number: number): Promise<WorkItemView> {
+export async function approvePlan(repoId: string, number: number): Promise<WorkItemView> {
   return postForView(
     `/api/repositories/${repoId}/workitems/feature/${number}/plan/approve`,
+    {},
+    REQUEST_TIMEOUT_MS,
+  );
+}
+
+// Inicia decomposição: aplica spec-wave:decompose (dispara a Action).
+export async function decomposeFeature(repoId: string, number: number): Promise<WorkItemView> {
+  return postForView(
+    `/api/repositories/${repoId}/workitems/feature/${number}/decompose`,
     {},
     REQUEST_TIMEOUT_MS,
   );
@@ -140,7 +150,7 @@ export async function approvePlan(repoId: number, number: number): Promise<WorkI
 // Cria uma Feature sob o épico (issue [FEATURE] + vínculo de sub-issue + board)
 // e devolve o WorkItemView do épico recarregado — o caller troca a view inteira.
 export async function createFeature(
-  repoId: number,
+  repoId: string,
   epicNumber: number,
   input: CreateFeatureRequest,
 ): Promise<WorkItemView> {
@@ -154,7 +164,7 @@ export async function createFeature(
 // Refina o artefato: registra o prompt como comentário e devolve o texto gerado
 // pela LLM (sem salvar). Timeout estendido (chamada à LLM).
 export async function refineArtifact(
-  repoId: number,
+  repoId: string,
   number: number,
   kind: ArtifactKind,
   prompt: string,
@@ -167,7 +177,7 @@ export async function refineArtifact(
   signal?.addEventListener('abort', onExternalAbort);
 
   try {
-    const res = await fetch(`${artifactBase(repoId, number, kind)}/refine`, {
+    const res = await apiFetch(`${artifactBase(repoId, number, kind)}/refine`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(base === undefined ? { prompt } : { prompt, base }),
@@ -194,7 +204,7 @@ export async function refineArtifact(
 
 // Salva o artefato (commit do arquivo) e devolve o WorkItemView atualizado.
 export async function saveArtifact(
-  repoId: number,
+  repoId: string,
   number: number,
   kind: ArtifactKind,
   content: string,
@@ -205,7 +215,7 @@ export async function saveArtifact(
 // Salva uma edição parcial (título/descrição) e devolve o WorkItemView atualizado.
 // Mesmo scaffolding de timeout/abort do fetchWorkItem; PATCH com corpo JSON.
 export async function saveWorkItem(
-  repoId: number,
+  repoId: string,
   level: Level,
   number: number,
   patch: WorkItemPatch,
@@ -217,7 +227,7 @@ export async function saveWorkItem(
   signal?.addEventListener('abort', onExternalAbort);
 
   try {
-    const res = await fetch(`/api/repositories/${repoId}/workitems/${level}/${number}`, {
+    const res = await apiFetch(`/api/repositories/${repoId}/workitems/${level}/${number}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(patch),
