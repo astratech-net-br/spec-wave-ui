@@ -1,6 +1,7 @@
 // Rotas REST de repositórios (e dos work items escopados por repositório).
 
 import { Router } from 'express';
+import { requireOwner } from '../middleware/auth.ts';
 import {
   getAllRepositories,
   getRepositoryById,
@@ -16,6 +17,7 @@ import {
 import {
   approveFeaturePlan,
   createFeatureArtifact,
+  decomposeFeatureHandler,
   refineFeatureArtifact,
   saveFeatureArtifact,
 } from '../controllers/ArtifactController.ts';
@@ -28,13 +30,14 @@ repositoryRoutes.get('/repositories', (req, res, next) => {
 });
 
 // POST /api/repositories → cadastra um repositório (e Projects v2 opcional).
-repositoryRoutes.post('/repositories', postRepository);
+// Gestão de repositórios é restrita ao owner (membros só usam).
+repositoryRoutes.post('/repositories', requireOwner, postRepository);
 
 // GET /api/repositories/:id → um repositório (pré-preenche a edição).
 repositoryRoutes.get('/repositories/:id', getRepositoryById);
 
 // PATCH /api/repositories/:id → edita url e/ou vínculo com o Projects v2.
-repositoryRoutes.patch('/repositories/:id', patchRepository);
+repositoryRoutes.patch('/repositories/:id', requireOwner, patchRepository);
 
 // GET /api/repositories/:id/epics → épicos (issues [EPIC]) do repositório.
 repositoryRoutes.get('/repositories/:id/epics', getRepositoryEpics);
@@ -70,4 +73,10 @@ repositoryRoutes.post(
 repositoryRoutes.post(
   '/repositories/:id/workitems/feature/:number/plan/approve',
   approveFeaturePlan,
+);
+
+// Decomposição: aplica spec-wave:decompose para disparar a Action.
+repositoryRoutes.post(
+  '/repositories/:id/workitems/feature/:number/decompose',
+  decomposeFeatureHandler,
 );

@@ -6,6 +6,7 @@
 // (NotConfiguredError). Falha do upstream → 502 (UpstreamError).
 
 import { config } from '../config.ts';
+import { resolveSecret } from '../lib/secrets.ts';
 import { NotConfiguredError, UpstreamError } from '../lib/errors.ts';
 import { stripWrappingCodeFence } from '../lib/markdown.ts';
 import type { ArtifactKind } from '@spec-flow/shared';
@@ -51,6 +52,7 @@ interface GenerateArgs {
   currentContent: string | null; // conteúdo atual do artefato (null/'' = primeira versão)
   userPrompt: string; // instrução de ajuste do usuário
   spec?: string | null; // só para kind 'plan': a spec atual como contexto
+  apiKeyOverride?: string | null; // chave OpenRouter própria do tenant (fase 3)
 }
 
 export async function generateArtifact({
@@ -58,9 +60,13 @@ export async function generateArtifact({
   currentContent,
   userPrompt,
   spec,
+  apiKeyOverride,
 }: GenerateArgs): Promise<string> {
-  if (!config.openrouter.apiKey) {
-    throw new NotConfiguredError('Configure OPENROUTER_API_KEY no servidor.');
+  // Chave do tenant (se cadastrada) > plataforma (Secrets Manager/env).
+  const apiKey =
+    apiKeyOverride || (await resolveSecret(config.openrouter.apiKey, config.openrouter.secretArn));
+  if (!apiKey) {
+    throw new NotConfiguredError('Configure a chave do OpenRouter no servidor.');
   }
 
   const userParts: string[] = [];
@@ -79,7 +85,7 @@ export async function generateArtifact({
     res = await fetch(ENDPOINT, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${config.openrouter.apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

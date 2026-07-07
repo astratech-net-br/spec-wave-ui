@@ -3,29 +3,28 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Backend Express + Knex + SQLite. Dono de toda integração com o GitHub (GraphQL + Contents API) e da API consumida pelo frontend.",
+  "description": "Backend Express multi-tenant (Lambda via serverless-http). Dono de toda integração com o GitHub (App installation tokens + GraphQL/Contents API) e da API consumida pelo frontend. Dados em DynamoDB.",
   "scripts": {
     "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
     "start": "tsx --env-file-if-exists=.env src/index.ts",
-    "migrate": "tsx src/db/cli.ts migrate",
-    "seed": "tsx src/db/cli.ts seed",
-    "backup": "tsx scripts/backup.ts",
+    "test": "node --import tsx --test test/*.test.ts",
+    "db:local": "tsx scripts/createLocalTable.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.700.0",
+    "@aws-sdk/client-kms": "^3.700.0",
+    "@aws-sdk/client-secrets-manager": "^3.700.0",
+    "@aws-sdk/client-sts": "^3.700.0",
+    "@aws-sdk/lib-dynamodb": "^3.700.0",
     "@spec-flow/shared": "*",
-    "better-sqlite3": "^11.3.0",
-    "cors": "^2.8.5",
     "express": "^4.21.1",
-    "express-rate-limit": "^7.4.1",
     "helmet": "^8.0.0",
-    "knex": "^3.1.0",
+    "serverless-http": "^3.2.0",
     "tsx": "^4.19.2",
     "winston": "^3.15.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
-    "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^22.9.0",
     "typescript": "^5.6.3"

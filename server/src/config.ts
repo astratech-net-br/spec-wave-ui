@@ -1,45 +1,64 @@
-// Configuração central — lida exclusivamente de variáveis de ambiente, com
-// defaults seguros para desenvolvimento. Nenhum segredo é hard-coded (spec:
-// "Dados sensíveis devem vir de variáveis ambiente").
+// Configuração central — lida exclusivamente de variáveis de ambiente.
+// Segredos (private key do GitHub App, webhook secret, chave OpenRouter) vêm do
+// Secrets Manager em produção (ARNs abaixo) com fallback para env var em dev
+// local (ver lib/secrets.ts). Nenhum segredo é hard-coded.
 //
-// Para carregar um arquivo .env, rode com `node --env-file=.env` (ou
-// `tsx --env-file=.env`). Veja .env.example.
-
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const packageRoot = path.resolve(__dirname, '..');
+// Para carregar um arquivo .env em dev, rode com `tsx --env-file-if-exists=.env`.
 
 export const config = {
   port: Number(process.env.PORT ?? 3001),
-  corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
-  // Caminho absoluto do arquivo SQLite, resolvido a partir da raiz do pacote.
-  databaseFile: path.resolve(packageRoot, process.env.DATABASE_FILE ?? './data/database.db'),
-  packageRoot,
   // Limite de itens retornados pela listagem (spec: até 50 por página).
   pageLimit: 50,
 
-  // Integração com o GitHub — vive SÓ no servidor (o token nunca vai ao browser).
-  // O repositório-alvo vem de cada linha do SQLite (parseando a url), não do env.
+  // DynamoDB single-table (multi-tenant). Em dev local, DYNAMODB_ENDPOINT pode
+  // apontar para um dynamodb-local (http://localhost:8000).
+  tableName: process.env.TABLE_NAME ?? 'spec-wave',
+  dynamoEndpoint: process.env.DYNAMODB_ENDPOINT || undefined,
+
+  // GitHub App — credencial por tenant. O servidor troca (appId + private key)
+  // por installation tokens curtos em runtime; nunca há token global de repo.
   github: {
-    token: process.env.GITHUB_TOKEN ?? '',
+    appId: process.env.GITHUB_APP_ID ?? '',
+    appSlug: process.env.GITHUB_APP_SLUG ?? '',
+    privateKeySecretArn: process.env.GITHUB_APP_PRIVATE_KEY_SECRET_ARN ?? '',
+    webhookSecretArn: process.env.GITHUB_WEBHOOK_SECRET_ARN ?? '',
+    // Dev local (sem AWS): PEM/segredo direto no env. Precedem os ARNs.
+    privateKeyPem: process.env.GITHUB_APP_PRIVATE_KEY ?? '',
+    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET ?? '',
     team: process.env.GITHUB_TEAM ?? '',
   },
 
   // LLM via OpenRouter — usada no refino interativo de spec.md/plan.md pela UI.
-  // A chave vive SÓ no servidor. Sem chave, os endpoints de refino retornam 503.
   openrouter: {
-    apiKey: process.env.OPENROUTER_API_KEY ?? '',
+    secretArn: process.env.OPENROUTER_SECRET_ARN ?? '',
+    apiKey: process.env.OPENROUTER_API_KEY ?? '', // dev local
     model: process.env.OPENROUTER_MODEL ?? 'deepseek/deepseek-v4-pro',
     // Teto de saída do refino. Generoso para caber o documento inteiro + o
-    // raciocínio dos modelos reasoning (sem limite explícito, o default do
-    // provider truncava o plan no meio).
+    // raciocínio dos modelos reasoning.
     maxTokens: Number(process.env.OPENROUTER_MAX_TOKENS ?? 8000),
   },
 
-  // Build do frontend, servido em produção (processo único).
-  clientDist: path.resolve(packageRoot, '../client/dist'),
-  // Em produção (ou SERVE_STATIC=true) o Express serve o client/dist + fallback SPA.
-  serveStatic: process.env.SERVE_STATIC === 'true' || process.env.NODE_ENV === 'production',
+  // URL pública do app (CloudFront) — usada nos redirects do Stripe Checkout.
+  appUrl: process.env.APP_URL ?? 'http://localhost:5173/',
+
+  // Billing via Stripe (fase 3). Segredos no Secrets Manager (prod) ou env (dev).
+  stripe: {
+    secretArn: process.env.STRIPE_SECRET_ARN ?? '',
+    secretKey: process.env.STRIPE_SECRET_KEY ?? '', // dev local
+    webhookSecretArn: process.env.STRIPE_WEBHOOK_SECRET_ARN ?? '',
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '', // dev local
+    priceIdPro: process.env.STRIPE_PRICE_PRO ?? '', // price do plano pro (recorrente)
+  },
+
+  // KMS para cifrar segredos POR TENANT (ex.: chave OpenRouter própria) antes de
+  // gravar no DynamoDB. Vazio (dev) → armazenamento recusado com 503.
+  tenantKmsKeyId: process.env.TENANT_KMS_KEY_ID ?? '',
+
+  // Hardening LeadingKeys (fase 2): role assumida por request com session tag
+  // tenant_id — o IAM restringe o DynamoDB às chaves do tenant. Vazio = desligado.
+  tenantRoleArn: process.env.TENANT_ROLE_ARN ?? '',
+
+  // Dev local SEM Cognito: define um tenant fixo para o middleware de auth.
+  // Ignorado quando NODE_ENV=production (nunca ativa em produção).
+  devTenantId: process.env.NODE_ENV === 'production' ? '' : (process.env.DEV_TENANT_ID ?? ''),
 };

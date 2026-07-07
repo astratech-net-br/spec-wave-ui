@@ -19,8 +19,9 @@ export interface RouteCoord {
 }
 
 // Repositório conectado, exibido no Dashboard. Schema de GET /api/repositories.
+// `id` é um ULID (string) gerado pelo servidor — escopado ao tenant dono.
 export interface Repository {
-  id: number;
+  id: string;
   name: string;
   url: string;
   createdAt: string; // ISO 8601
@@ -115,6 +116,7 @@ export interface WorkItemView {
   descriptionMdx: string; // Feature (corpo da issue)
   specMdx?: string | null; // só Feature: docs/features/<slug>/spec.md; null = sem aba Spec
   planMdx?: string | null; // só Feature: docs/features/<slug>/plan.md; null = sem aba Plan
+  planApproved?: boolean; // só Feature: true se label spec-wave:plan-approved presente
   headerPct: number; // % grande do painel de progresso
   progressLabel: string; // "Progresso do épico" / "da feature" / "da story"
   childrenLabel: string; // "Features" | "Stories" | "Tasks"

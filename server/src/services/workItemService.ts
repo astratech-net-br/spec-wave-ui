@@ -117,14 +117,15 @@ export async function loadWorkItem(
   return adaptStory(issue, ctx);
 }
 
-// Resolve o repositório pelo id (SQLite) e carrega o work item naquele repo.
+// Resolve o repositório do tenant pelo id e carrega o work item naquele repo.
 export async function loadWorkItemForRepository(
-  id: number,
+  tenantId: string,
+  id: string,
   level: Level,
   number: number,
 ): Promise<WorkItemView> {
-  const row = await getRepositoryOr404(id);
-  return loadWorkItem(configForRepository(row), level, number);
+  const record = await getRepositoryOr404(tenantId, id);
+  return loadWorkItem(await configForRepository(record), level, number);
 }
 
 // Aplica uma edição parcial (título/corpo) na issue e devolve o WorkItemView
@@ -150,15 +151,16 @@ export async function updateWorkItem(
   return loadWorkItem(config, level, number);
 }
 
-// Resolve o repositório pelo id (SQLite) e edita o work item naquele repo.
+// Resolve o repositório do tenant pelo id e edita o work item naquele repo.
 export async function updateWorkItemForRepository(
-  id: number,
+  tenantId: string,
+  id: string,
   level: Level,
   number: number,
   patch: WorkItemPatch,
 ): Promise<WorkItemView> {
-  const row = await getRepositoryOr404(id);
-  return updateWorkItem(configForRepository(row), level, number, patch);
+  const record = await getRepositoryOr404(tenantId, id);
+  return updateWorkItem(await configForRepository(record), level, number, patch);
 }
 
 // Monta o corpo da Feature, espelhando o `spec-wave issue`: referência ao pai
@@ -233,11 +235,12 @@ async function addFeatureToBoard(
 // aparecer na lista) e adiciona ao Projects v2 (best-effort). Devolve o
 // WorkItemView do épico recarregado, já com a nova feature entre os filhos.
 export async function createFeatureForRepository(
-  id: number,
+  tenantId: string,
+  id: string,
   epicNumber: number,
   input: CreateFeatureRequest,
 ): Promise<WorkItemView> {
-  const config = configForRepository(await getRepositoryOr404(id));
+  const config = await configForRepository(await getRepositoryOr404(tenantId, id));
 
   // Node id + título do épico (para o vínculo e a referência ao pai no corpo).
   const epic = await fetchIssueRef(config, epicNumber);
@@ -265,10 +268,10 @@ export async function createFeatureForRepository(
   return loadWorkItem(config, 'epic', epicNumber);
 }
 
-// Lista os épicos (issues [EPIC]) de um repositório.
-export async function loadEpicSummaries(id: number): Promise<RepositoryEpics> {
-  const row = await getRepositoryOr404(id);
-  const config = configForRepository(row);
+// Lista os épicos (issues [EPIC]) de um repositório do tenant.
+export async function loadEpicSummaries(tenantId: string, id: string): Promise<RepositoryEpics> {
+  const record = await getRepositoryOr404(tenantId, id);
+  const config = await configForRepository(record);
   const issues = await fetchEpicSummaries(config);
 
   const epics: EpicSummary[] = issues.map((issue) => {
@@ -282,5 +285,5 @@ export async function loadEpicSummaries(id: number): Promise<RepositoryEpics> {
     };
   });
 
-  return { repository: toRepositoryDTO(row), epics };
+  return { repository: toRepositoryDTO(record), epics };
 }

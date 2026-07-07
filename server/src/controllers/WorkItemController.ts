@@ -11,6 +11,8 @@ import {
   updateWorkItemForRepository,
 } from '../services/workItemService.ts';
 import { HttpError } from '../lib/errors.ts';
+import { isValidRepoId } from '../lib/validation.ts';
+import { tenantOf } from '../middleware/auth.ts';
 
 const LEVELS: Level[] = ['epic', 'feature', 'story'];
 
@@ -26,8 +28,8 @@ export async function getRepositoryWorkItem(
 ): Promise<void> {
   const { id, level, number } = req.params;
 
-  const repoId = Number(id);
-  if (!Number.isInteger(repoId) || repoId <= 0) {
+  const repoId = id;
+  if (!isValidRepoId(repoId)) {
     res.status(400).json({ error: `Repositório inválido: "${id}".` });
     return;
   }
@@ -42,7 +44,7 @@ export async function getRepositoryWorkItem(
   }
 
   try {
-    res.json(await loadWorkItemForRepository(repoId, level as Level, n));
+    res.json(await loadWorkItemForRepository(tenantOf(req).tenantId, repoId, level as Level, n));
   } catch (err) {
     if (err instanceof HttpError) {
       res.status(err.status).json({ error: err.message });
@@ -62,8 +64,8 @@ export async function updateRepositoryWorkItem(
 ): Promise<void> {
   const { id, level, number } = req.params;
 
-  const repoId = Number(id);
-  if (!Number.isInteger(repoId) || repoId <= 0) {
+  const repoId = id;
+  if (!isValidRepoId(repoId)) {
     res.status(400).json({ error: `Repositório inválido: "${id}".` });
     return;
   }
@@ -100,7 +102,7 @@ export async function updateRepositoryWorkItem(
   }
 
   try {
-    res.json(await updateWorkItemForRepository(repoId, level as Level, n, patch));
+    res.json(await updateWorkItemForRepository(tenantOf(req).tenantId, repoId, level as Level, n, patch));
   } catch (err) {
     if (err instanceof HttpError) {
       res.status(err.status).json({ error: err.message });
@@ -120,8 +122,8 @@ export async function createRepositoryFeature(
 ): Promise<void> {
   const { id, number } = req.params;
 
-  const repoId = Number(id);
-  if (!Number.isInteger(repoId) || repoId <= 0) {
+  const repoId = id;
+  if (!isValidRepoId(repoId)) {
     res.status(400).json({ error: `Repositório inválido: "${id}".` });
     return;
   }
@@ -155,7 +157,7 @@ export async function createRepositoryFeature(
   if (typeof body.area === 'string') input.area = body.area;
 
   try {
-    res.status(201).json(await createFeatureForRepository(repoId, epicNumber, input));
+    res.status(201).json(await createFeatureForRepository(tenantOf(req).tenantId, repoId, epicNumber, input));
   } catch (err) {
     if (err instanceof HttpError) {
       res.status(err.status).json({ error: err.message });

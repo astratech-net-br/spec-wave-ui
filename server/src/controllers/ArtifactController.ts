@@ -7,10 +7,13 @@ import type { ArtifactKind } from '@spec-flow/shared';
 import {
   approvePlan,
   createArtifact,
+  decomposeFeature,
   refineArtifact,
   saveArtifact,
 } from '../services/artifactService.ts';
 import { HttpError } from '../lib/errors.ts';
+import { isValidRepoId } from '../lib/validation.ts';
+import { tenantOf } from '../middleware/auth.ts';
 
 const KINDS: ArtifactKind[] = ['spec', 'plan'];
 
@@ -18,11 +21,11 @@ const KINDS: ArtifactKind[] = ['spec', 'plan'];
 function parseParams(
   req: Request,
   res: Response,
-): { repoId: number; number: number; kind: ArtifactKind } | null {
+): { repoId: string; number: number; kind: ArtifactKind } | null {
   const { id, number, artifact } = req.params;
 
-  const repoId = Number(id);
-  if (!Number.isInteger(repoId) || repoId <= 0) {
+  const repoId = id;
+  if (!isValidRepoId(repoId)) {
     res.status(400).json({ error: `Repositório inválido: "${id}".` });
     return null;
   }
@@ -42,11 +45,11 @@ function parseParams(
 function parseRepoAndNumber(
   req: Request,
   res: Response,
-): { repoId: number; number: number } | null {
+): { repoId: string; number: number } | null {
   const { id, number } = req.params;
 
-  const repoId = Number(id);
-  if (!Number.isInteger(repoId) || repoId <= 0) {
+  const repoId = id;
+  if (!isValidRepoId(repoId)) {
     res.status(400).json({ error: `Repositório inválido: "${id}".` });
     return null;
   }
@@ -75,7 +78,7 @@ export async function createFeatureArtifact(
   const p = parseParams(req, res);
   if (!p) return;
   try {
-    res.json(await createArtifact(p.repoId, p.number, p.kind));
+    res.json(await createArtifact(tenantOf(req).tenantId, p.repoId, p.number, p.kind));
   } catch (err) {
     handleError(err, res, next);
   }
@@ -90,7 +93,22 @@ export async function approveFeaturePlan(
   const p = parseRepoAndNumber(req, res);
   if (!p) return;
   try {
-    res.json(await approvePlan(p.repoId, p.number));
+    res.json(await approvePlan(tenantOf(req).tenantId, p.repoId, p.number));
+  } catch (err) {
+    handleError(err, res, next);
+  }
+}
+
+// POST .../workitems/feature/:number/decompose → aplica spec-wave:decompose.
+export async function decomposeFeatureHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const p = parseRepoAndNumber(req, res);
+  if (!p) return;
+  try {
+    res.json(await decomposeFeature(tenantOf(req).tenantId, p.repoId, p.number));
   } catch (err) {
     handleError(err, res, next);
   }
@@ -117,7 +135,7 @@ export async function refineFeatureArtifact(
 
   try {
     const base = typeof body.base === 'string' ? body.base : undefined;
-    const content = await refineArtifact(p.repoId, p.number, p.kind, body.prompt.trim(), base);
+    const content = await refineArtifact(tenantOf(req).tenantId, p.repoId, p.number, p.kind, body.prompt.trim(), base);
     res.json({ content });
   } catch (err) {
     handleError(err, res, next);
@@ -140,7 +158,7 @@ export async function saveFeatureArtifact(
   }
 
   try {
-    res.json(await saveArtifact(p.repoId, p.number, p.kind, body.content));
+    res.json(await saveArtifact(tenantOf(req).tenantId, p.repoId, p.number, p.kind, body.content));
   } catch (err) {
     handleError(err, res, next);
   }

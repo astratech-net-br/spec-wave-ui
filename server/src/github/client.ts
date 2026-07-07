@@ -7,6 +7,7 @@
 
 import type { GhEpicPayload, GhIssue } from './types.ts';
 import { NotFoundError, UpstreamError } from '../lib/errors.ts';
+import { cachedGet } from '../lib/githubCache.ts';
 
 // Config do Projects v2 de um repositório (descoberta no cadastro e persistida no
 // SQLite). Permite mover a Feature de etapa: `etapaFieldId` é o campo single-select
@@ -231,11 +232,10 @@ export async function fetchEpicPayload(config: GitHubConfig): Promise<GhEpicPayl
 // Usado para buscar `docs/features/<slug>/plan.md` na Feature View.
 export async function fetchFileContent(config: GitHubConfig, path: string): Promise<string | null> {
   const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${path}`;
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `bearer ${config.token}`,
-      Accept: 'application/vnd.github.raw+json',
-    },
+  // GET condicional (ETag): 304 não consome rate limit — ver lib/githubCache.ts.
+  const res = await cachedGet(url, {
+    Authorization: `bearer ${config.token}`,
+    Accept: 'application/vnd.github.raw+json',
   });
   if (res.status === 404) return null;
   if (!res.ok) throw new UpstreamError(`GitHub Contents API ${res.status}: ${await res.text()}`);
@@ -246,17 +246,15 @@ export async function fetchFileContent(config: GitHubConfig, path: string): Prom
 // Usado na edição para reanexar o prefixo ao salvar um novo título.
 export async function fetchIssueTitle(config: GitHubConfig, number: number): Promise<string> {
   const url = `https://api.github.com/repos/${config.owner}/${config.repo}/issues/${number}`;
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `bearer ${config.token}`,
-      Accept: 'application/vnd.github+json',
-    },
+  const res = await cachedGet(url, {
+    Authorization: `bearer ${config.token}`,
+    Accept: 'application/vnd.github+json',
   });
   if (res.status === 404) {
     throw new NotFoundError(`Issue #${number} não encontrada em ${config.owner}/${config.repo}.`);
   }
   if (!res.ok) throw new UpstreamError(`GitHub Issues API ${res.status}: ${await res.text()}`);
-  const json = (await res.json()) as { title?: string };
+  const json = JSON.parse(await res.text()) as { title?: string };
   return json.title ?? '';
 }
 
@@ -266,15 +264,13 @@ export async function fetchIssueTitle(config: GitHubConfig, number: number): Pro
 // renomeações do título. Limita a 100 comentários (1 página). 404 → [].
 export async function fetchIssueComments(config: GitHubConfig, number: number): Promise<string[]> {
   const url = `https://api.github.com/repos/${config.owner}/${config.repo}/issues/${number}/comments?per_page=100`;
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `bearer ${config.token}`,
-      Accept: 'application/vnd.github+json',
-    },
+  const res = await cachedGet(url, {
+    Authorization: `bearer ${config.token}`,
+    Accept: 'application/vnd.github+json',
   });
   if (res.status === 404) return [];
   if (!res.ok) throw new UpstreamError(`GitHub Issues API ${res.status}: ${await res.text()}`);
-  const json = (await res.json()) as Array<{ body?: string }>;
+  const json = JSON.parse(await res.text()) as Array<{ body?: string }>;
   return json.map((c) => c.body ?? '');
 }
 

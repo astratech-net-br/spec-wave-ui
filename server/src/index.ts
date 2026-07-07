@@ -1,51 +1,45 @@
-// Servidor Express da app fullstack.
+// App Express da API — usado pela Lambda (lambda.ts, via serverless-http) e
+// pelo dev local (bootstrap abaixo).
 //
-// Responsabilidades:
-//   - API /api/* (repositories + workitems) — única via de acesso ao GitHub
-//   - Middlewares de segurança: helmet, CORS restrito, rate limiting
-//   - Em produção (serveStatic), serve o build do frontend (client/dist) + SPA fallback
-// O schema do SQLite é garantido no boot (migrate) e populado em dev (seed).
+// No SaaS, responsabilidades que saíram do Express:
+//   - Autenticação/assinatura do JWT → JWT authorizer do API Gateway (Cognito)
+//   - Rate limiting → throttling do API Gateway + WAF
+//   - Estáticos do frontend → S3 + CloudFront (mesma origem: sem CORS)
+// Aqui ficam: helmet, parsing JSON, contexto de tenant (claims) e as rotas /api.
 
-import path from 'node:path';
 import express from 'express';
 import helmet from 'helmet';
-import cors from 'cors';
-import rateLimit from 'express-rate-limit';
 import { config } from './config.ts';
 import { logger } from './lib/logger.ts';
-import { db, runMigrations } from './db/index.ts';
+import { tenantContext } from './middleware/auth.ts';
 import { repositoryRoutes } from './routes/repositoryRoutes.ts';
+import { githubRoutes } from './routes/githubRoutes.ts';
+import { accountRoutes } from './routes/accountRoutes.ts';
 
 export function createApp() {
   const app = express();
 
   app.use(helmet());
-  app.use(cors({ origin: config.corsOrigin }));
   app.use(express.json());
-  app.use(rateLimit({ windowMs: 60_000, limit: 120 })); // 120 req/min por IP
 
-  // Health check.
+  // Health check (sem auth — usado por monitoração).
   app.get('/status', (_req, res) => {
     res.json({ status: 'ok', uptime: process.uptime() });
   });
 
+  // Todas as rotas /api exigem tenant (claims do Cognito via API GW; em dev
+  // local, DEV_TENANT_ID). O isolamento por tenant começa aqui.
+  app.use('/api', tenantContext);
+  app.use('/api', githubRoutes);
+  app.use('/api', accountRoutes);
   app.use('/api', repositoryRoutes);
 
-  // 404 JSON — escopado em /api para não engolir as rotas SPA do fallback.
+  // 404 JSON para /api.
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'Not found' });
   });
 
-  // Produção: serve o frontend buildado e faz fallback de qualquer GET não-/api
-  // para o index.html (hash-router do client resolve a rota no browser).
-  if (config.serveStatic) {
-    app.use(express.static(config.clientDist));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(config.clientDist, 'index.html'));
-    });
-  }
-
-  // Handler de erros — responde com o status do HttpError (se houver) ou 500.
+  // Handler de erros — o controller já mapeou HttpError; aqui só o inesperado.
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     logger.error(err instanceof Error ? err : String(err));
     res.status(500).json({ error: 'Internal server error' });
@@ -54,18 +48,12 @@ export function createApp() {
   return app;
 }
 
-async function bootstrap() {
-  await runMigrations();
-  // Seed básico em dev (idempotente — não sobrescreve dados existentes).
-  await db.seed.run();
-
+// Dev local: `npm run dev` sobe o Express direto (sem Lambda). Requer
+// DEV_TENANT_ID e, para GitHub, as vars do App (ver .env.example).
+if (process.env.LAMBDA_TASK_ROOT === undefined && process.argv[1]?.endsWith('index.ts')) {
   const app = createApp();
   app.listen(config.port, () => {
-    logger.info(`API ouvindo em http://localhost:${config.port} (CORS: ${config.corsOrigin})`);
+    logger.info(`API ouvindo em http://localhost:${config.port}`);
+    if (config.devTenantId) logger.info(`Dev tenant: ${config.devTenantId}`);
   });
 }
-
-bootstrap().catch((err) => {
-  logger.error(err);
-  process.exit(1);
-});
