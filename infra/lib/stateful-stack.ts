@@ -92,7 +92,13 @@ export class StatefulStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_22_X,
       entry: path.join(serverSrc, 'triggers/cognito.ts'),
       environment: { TABLE_NAME: this.table.tableName, NODE_ENV: 'production' },
-      bundling: { format: OutputFormat.ESM, target: 'node22' },
+      bundling: {
+        format: OutputFormat.ESM,
+        target: 'node22',
+        // Shim p/ require() dinâmico das deps CJS (winston) no bundle ESM.
+        banner:
+          "import { createRequire } from 'module'; const require = createRequire(import.meta.url);",
+      },
       timeout: cdk.Duration.seconds(10),
     };
     const postConfirmationFn = new NodejsFunction(this, 'PostConfirmationFn', {

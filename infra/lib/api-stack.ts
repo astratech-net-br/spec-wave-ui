@@ -61,7 +61,14 @@ export class ApiStack extends cdk.Stack {
       APP_URL: appUrl,
       TENANT_KMS_KEY_ID: props.tenantDataKey.keyId,
     };
-    const bundling = { format: OutputFormat.ESM, target: 'node22' };
+    // Banner createRequire: deps CJS (express/serverless-http/winston) fazem
+    // require() dinâmico de builtins — sem o shim o bundle ESM quebra no boot
+    // ("Dynamic require of \"http\" is not supported").
+    const bundling = {
+      format: OutputFormat.ESM,
+      target: 'node22',
+      banner: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);",
+    };
 
     // ---------- Lambda api (Express monolito) ----------
     const apiFn = new NodejsFunction(this, 'ApiFn', {
