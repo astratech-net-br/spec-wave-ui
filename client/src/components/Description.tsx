@@ -7,11 +7,12 @@ import { useInlineEdit } from '../hooks/useInlineEdit';
 
 interface DescriptionProps {
   level: Level;
-  repoId: number;
+  repoId: string;
   number: number; // número da issue do item atual (Feature, p/ spec/plan)
   source: string; // Feature (corpo da issue)
   spec?: string | null; // spec.md
   plan?: string | null; // plan.md
+  planApproved?: boolean; // true se label spec-wave:plan-approved presente
   onSave?: (patch: WorkItemPatch) => Promise<void>; // edita o corpo da issue (aba Feature)
   applyView: (view: WorkItemView) => void; // substitui a view do pai (create/save/poll)
 }
@@ -25,6 +26,7 @@ export function Description({
   source,
   spec,
   plan,
+  planApproved,
   onSave,
   applyView,
 }: DescriptionProps) {
@@ -99,6 +101,7 @@ export function Description({
           repoId={repoId}
           featureNumber={number}
           applyView={applyView}
+          planApproved={planApproved}
         />
       )}
     </section>

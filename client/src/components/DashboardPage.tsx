@@ -5,6 +5,9 @@
 import { useMemo, useState } from 'react';
 import { useRepositories } from '../hooks/useRepositories';
 import { RepositoryCard } from './RepositoryCard';
+import { startGitHubAppInstall } from '../data/github';
+import { hrefForWorkspace } from '../lib/router';
+import { lastWorkspaceRole } from '../state/WorkspaceContext';
 
 // Rota futura para conectar/adicionar um repositório (ainda não implementada).
 const CONNECT_HREF = '#/repositories/new';
@@ -67,6 +70,21 @@ export function DashboardPage() {
           </nav>
         </div>
         <div className="topbar__right">
+          <a className="btn btn--accent" href={hrefForWorkspace(lastWorkspaceRole())}>
+            Abrir workspace
+          </a>
+          <a className="btn" href="#/settings">
+            Configurações
+          </a>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              startGitHubAppInstall().catch((err: Error) => alert(err.message));
+            }}
+          >
+            Instalar GitHub App
+          </button>
           <a className="btn btn--accent" href={CONNECT_HREF}>
             Conectar novo repositório
           </a>

@@ -19,7 +19,7 @@ const PRIORITY_TEXT: Record<string, string> = {
   P3: 'Baixa',
 };
 
-const AREA_NAMES = new Set(['Frontend', 'Backend', 'Mobile', 'Infra', 'DevOps', 'Data']);
+export const AREA_NAMES = new Set(['Frontend', 'Backend', 'Mobile', 'Infra', 'DevOps', 'Data']);
 
 function isClosed(issue: GhIssue): boolean {
   return String(issue.state).toUpperCase() === 'CLOSED';
@@ -262,6 +262,7 @@ export function adaptFeature(issue: GhIssue, ctx: AdaptContext = {}): WorkItemVi
     descriptionMdx: issue.body || '',
     specMdx: ctx.spec ?? null,
     planMdx: ctx.plan ?? null,
+    planApproved: labelNames(issue).includes('spec-wave:plan-approved'),
     headerPct: pct,
     progressLabel: 'Progresso da feature',
     childrenLabel: 'Stories',

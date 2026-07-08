@@ -3,32 +3,19 @@
 //   - getRepositoryEpics  → épicos do repo no GitHub (issues [EPIC])
 
 import type { NextFunction, Request, Response } from 'express';
-import { db } from '../db/index.ts';
-import { config } from '../config.ts';
-import { logger } from '../lib/logger.ts';
-import { isValidHttpUrl } from '../lib/validation.ts';
+import { isValidRepoId } from '../lib/validation.ts';
 import { HttpError } from '../lib/errors.ts';
+import { tenantOf } from '../middleware/auth.ts';
 import { loadEpicSummaries } from '../services/workItemService.ts';
 import {
   createRepository,
   getRepository,
+  listRepositories,
   updateRepository,
-  toRepositoryDTO,
-  type RepositoryRow,
 } from '../services/repositoryService.ts';
 
-export async function getAllRepositories(_req: Request, res: Response): Promise<void> {
-  const rows = await db<RepositoryRow>('repositories')
-    .select('id', 'name', 'url', 'created_at')
-    .orderBy('created_at', 'desc') // mais recentes primeiro
-    .limit(config.pageLimit); // até 50 (paginação futura)
-
-  for (const row of rows) {
-    // URL inválida (dados corrompidos): loga mas não bloqueia a listagem.
-    if (!isValidHttpUrl(row.url)) logger.warn(`Repositório #${row.id} com URL inválida: ${row.url}`);
-  }
-
-  res.json(rows.map(toRepositoryDTO));
+export async function getAllRepositories(req: Request, res: Response): Promise<void> {
+  res.json(await listRepositories(tenantOf(req).tenantId));
 }
 
 // POST /api/repositories — cadastra um repositório (e, opcionalmente, introspecta
@@ -49,7 +36,7 @@ export async function postRepository(
   }
 
   try {
-    const repo = await createRepository({
+    const repo = await createRepository(tenantOf(req).tenantId, {
       url: body.url,
       projectUrl: typeof body.projectUrl === 'string' ? body.projectUrl : undefined,
     });
@@ -69,13 +56,13 @@ export async function getRepositoryById(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  const repoId = Number(req.params.id);
-  if (!Number.isInteger(repoId) || repoId <= 0) {
+  const repoId = req.params.id;
+  if (!isValidRepoId(repoId)) {
     res.status(400).json({ error: `Repositório inválido: "${req.params.id}".` });
     return;
   }
   try {
-    res.json(await getRepository(repoId));
+    res.json(await getRepository(tenantOf(req).tenantId, repoId));
   } catch (err) {
     if (err instanceof HttpError) {
       res.status(err.status).json({ error: err.message });
@@ -91,8 +78,8 @@ export async function patchRepository(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  const repoId = Number(req.params.id);
-  if (!Number.isInteger(repoId) || repoId <= 0) {
+  const repoId = req.params.id;
+  if (!isValidRepoId(repoId)) {
     res.status(400).json({ error: `Repositório inválido: "${req.params.id}".` });
     return;
   }
@@ -119,7 +106,7 @@ export async function patchRepository(
   }
 
   try {
-    res.json(await updateRepository(repoId, input));
+    res.json(await updateRepository(tenantOf(req).tenantId, repoId, input));
   } catch (err) {
     if (err instanceof HttpError) {
       res.status(err.status).json({ error: err.message });
@@ -134,14 +121,14 @@ export async function getRepositoryEpics(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  const repoId = Number(req.params.id);
-  if (!Number.isInteger(repoId) || repoId <= 0) {
+  const repoId = req.params.id;
+  if (!isValidRepoId(repoId)) {
     res.status(400).json({ error: `Repositório inválido: "${req.params.id}".` });
     return;
   }
 
   try {
-    res.json(await loadEpicSummaries(repoId));
+    res.json(await loadEpicSummaries(tenantOf(req).tenantId, repoId));
   } catch (err) {
     if (err instanceof HttpError) {
       res.status(err.status).json({ error: err.message });

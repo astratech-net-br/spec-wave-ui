@@ -6,7 +6,7 @@ import { NewFeatureForm } from './NewFeatureForm';
 interface ItemsPanelProps {
   items: ChildItem[];
   label: string; // "Features" | "Stories" | "Tasks"
-  repoId: number; // escopa os links de drill-down dos cards
+  repoId: string; // escopa os links de drill-down dos cards
   // Quando presente, habilita o "+ Adicionar" + form inline (hoje só Epic→Feature).
   // Ausente = painel somente leitura (Stories/Tasks ainda não têm criação pela UI).
   onCreate?: (input: CreateFeatureRequest) => Promise<void>;

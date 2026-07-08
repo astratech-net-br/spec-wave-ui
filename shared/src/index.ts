@@ -1,4 +1,5 @@
-// Barrel do pacote compartilhado — só tipos (contrato de exibição).
+// Barrel do pacote compartilhado — tipos (contrato de exibição) + constantes
+// dos enums de workspace (STAGE_NAMES, PRIORITIES).
 export type {
   Status,
   Level,
@@ -19,4 +20,12 @@ export type {
   ArtifactRefineRequest,
   ArtifactRefineResponse,
   ArtifactSaveRequest,
+  WorkspaceRole,
+  StageName,
+  Priority,
+  MilestoneSummary,
+  PullRequestRef,
+  SnapshotItem,
+  ProjectSnapshot,
 } from './types';
+export { STAGE_NAMES, PRIORITIES } from './types';

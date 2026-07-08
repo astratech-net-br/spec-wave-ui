@@ -21,6 +21,10 @@ import {
 } from '../github/client.ts';
 import { generateArtifact } from '../llm/openrouter.ts';
 import { logger } from '../lib/logger.ts';
+import { emitMetric } from '../lib/metrics.ts';
+import { invalidateSnapshot } from '../lib/snapshotCache.ts';
+import { consumeRefineOrThrow } from './quotaService.ts';
+import { tenantOpenrouterKey } from './settingsService.ts';
 import { configForRepository, getRepositoryOr404 } from './repositoryService.ts';
 import { loadWorkItem, resolveFeaturePaths } from './workItemService.ts';
 
@@ -32,6 +36,9 @@ const LABEL: Record<ArtifactKind, string> = {
 
 // Label que sinaliza que o plan.md foi aprovado e a Feature está pronta.
 const READY_LABEL = 'spec-wave:ready';
+
+// Label que dispara a decomposição da Feature em Stories e Tasks.
+const DECOMPOSE_LABEL = 'spec-wave:decompose';
 
 // Título da issue (para o slug de fallback). Best-effort — em falha devolve ''.
 async function fetchTitleSafe(config: GitHubConfig, number: number): Promise<string> {
@@ -77,35 +84,60 @@ async function moveStage(config: GitHubConfig, number: number, kind: ArtifactKin
 // create: aplica o label (dispara a Action) e move a etapa. Devolve o
 // WorkItemView recarregado (o arquivo ainda não existe; o client faz o poll).
 export async function createArtifact(
-  id: number,
+  tenantId: string,
+  id: string,
   number: number,
   kind: ArtifactKind,
 ): Promise<WorkItemView> {
-  const config = configForRepository(await getRepositoryOr404(id));
+  const config = await configForRepository(await getRepositoryOr404(tenantId, id));
   await addLabel(config, number, LABEL[kind]);
   await moveStage(config, number, kind);
+  invalidateSnapshot(tenantId, id); // label + etapa mudaram → workspaces releem
   return loadWorkItem(config, 'feature', number);
 }
 
 // approvePlan: aplica o label de aprovação (spec-wave:ready) na Feature e devolve
 // o WorkItemView recarregado. Idempotente (addLabel não duplica). Pré-condição de
 // existência do plan.md é checada na UI; aqui só aplicamos o label.
-export async function approvePlan(id: number, number: number): Promise<WorkItemView> {
-  const config = configForRepository(await getRepositoryOr404(id));
+export async function approvePlan(
+  tenantId: string,
+  id: string,
+  number: number,
+): Promise<WorkItemView> {
+  const config = await configForRepository(await getRepositoryOr404(tenantId, id));
   await addLabel(config, number, READY_LABEL);
+  invalidateSnapshot(tenantId, id);
+  return loadWorkItem(config, 'feature', number);
+}
+
+// decomposeFeature: aplica spec-wave:decompose para disparar a Action de decomposição.
+export async function decomposeFeature(
+  tenantId: string,
+  id: string,
+  number: number,
+): Promise<WorkItemView> {
+  const config = await configForRepository(await getRepositoryOr404(tenantId, id));
+  await addLabel(config, number, DECOMPOSE_LABEL);
+  invalidateSnapshot(tenantId, id);
   return loadWorkItem(config, 'feature', number);
 }
 
 // refine: registra o prompt como comentário, lê o artefato atual (e a spec, no
 // caso do plan, como contexto) e pede à LLM o texto ajustado. NÃO salva.
 export async function refineArtifact(
-  id: number,
+  tenantId: string,
+  id: string,
   number: number,
   kind: ArtifactKind,
   prompt: string,
   base?: string,
 ): Promise<string> {
-  const config = configForRepository(await getRepositoryOr404(id));
+  const config = await configForRepository(await getRepositoryOr404(tenantId, id));
+
+  // Cota (fase 3): consome 1 refine do mês ANTES de qualquer efeito colateral.
+  // Tenant com chave OpenRouter própria não consome cota (o custo de LLM é dele).
+  const tenantKey = await tenantOpenrouterKey(tenantId);
+  if (!tenantKey) await consumeRefineOrThrow(tenantId);
 
   await createComment(config, number, `🛠️ **Refino de ${kind} (via UI)**\n\n${prompt}`);
 
@@ -119,18 +151,32 @@ export async function refineArtifact(
   const spec =
     kind === 'plan' ? await fetchFileContent(config, specPath).catch(() => null) : null;
 
-  return generateArtifact({ kind, currentContent, userPrompt: prompt, spec });
+  // Mede a duração do refine (decisão fase 2: p90 > 25 s → Function URL ou
+  // padrão assíncrono; teto duro do HTTP API é 29 s). Métrica SpecWave/RefineDurationMs.
+  const startedAt = Date.now();
+  try {
+    return await generateArtifact({
+      kind,
+      currentContent,
+      userPrompt: prompt,
+      spec,
+      apiKeyOverride: tenantKey,
+    });
+  } finally {
+    emitMetric('RefineDurationMs', Date.now() - startedAt, 'Milliseconds', { kind });
+  }
 }
 
 // save: commita o conteúdo no arquivo (branch padrão) e devolve o WorkItemView
 // recarregado — assim specMdx/planMdx atualizam na hora.
 export async function saveArtifact(
-  id: number,
+  tenantId: string,
+  id: string,
   number: number,
   kind: ArtifactKind,
   content: string,
 ): Promise<WorkItemView> {
-  const config = configForRepository(await getRepositoryOr404(id));
+  const config = await configForRepository(await getRepositoryOr404(tenantId, id));
   const path = await pathFor(config, number, kind);
   await putFileContent(config, path, content, `docs(${kind}): atualiza ${path} via UI`);
   return loadWorkItem(config, 'feature', number);
