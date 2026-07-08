@@ -1,10 +1,15 @@
-# Deploy contínuo (main → conta 458889634344) via OIDC — sem access keys.
+# Deploy contínuo (push em main → conta 458889634344) via OIDC — sem access keys.
 #
-# Pré-requisitos (uma vez):
-#   1. cdk deploy SpecWaveCicd -c githubRepo=<org/repo>  → output DeployRoleArn
-#   2. Variáveis do repositório (Settings → Variables → Actions):
-#      SPEC_WAVE_DEPLOY_ROLE_ARN, SPEC_WAVE_GH_APP_ID, SPEC_WAVE_GH_APP_SLUG,
-#      SPEC_WAVE_APP_URL, SPEC_WAVE_COGNITO_DOMAIN, SPEC_WAVE_COGNITO_CLIENT_ID
+# Config de App/appUrl/Cognito-domain vem do infra/cdk.json (commitado). O que
+# NÃO cabe no cdk.json são as 3 variáveis abaixo (Settings → Secrets and
+# variables → Actions → Variables):
+#   SPEC_WAVE_DEPLOY_ROLE_ARN   — output DeployRoleArn do stack SpecWaveCicd
+#   SPEC_WAVE_COGNITO_DOMAIN    — domínio do Hosted UI (build do client)
+#   SPEC_WAVE_COGNITO_CLIENT_ID — app client público do Cognito (build do client)
+#
+# Pré-requisito (uma vez): cdk deploy SpecWaveCicd -c githubRepo=<org/repo>.
+# Billing (Stripe) não é configurado por aqui — adicione -c stripePricePro=... e
+# os secrets quando ativar.
 name: deploy
 
 on:
@@ -36,11 +41,7 @@ jobs:
         with:
           role-to-assume: ${{ vars.SPEC_WAVE_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
+      # App ID/slug/appUrl vêm do cdk.json; só githubRepo é dinâmico.
       - name: CDK deploy
         working-directory: infra
-        run: |
-          npx cdk deploy --all --require-approval never \
-            -c githubAppId='${{ vars.SPEC_WAVE_GH_APP_ID }}' \
-            -c githubAppSlug='${{ vars.SPEC_WAVE_GH_APP_SLUG }}' \
-            -c appUrl='${{ vars.SPEC_WAVE_APP_URL }}' \
-            -c githubRepo='${{ github.repository }}'
+        run: npx cdk deploy --all --require-approval never -c githubRepo='${{ github.repository }}'
