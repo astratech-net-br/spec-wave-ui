@@ -19,7 +19,7 @@ const PRIORITY_TEXT: Record<string, string> = {
   P3: 'Baixa',
 };
 
-const AREA_NAMES = new Set(['Frontend', 'Backend', 'Mobile', 'Infra', 'DevOps', 'Data']);
+export const AREA_NAMES = new Set(['Frontend', 'Backend', 'Mobile', 'Infra', 'DevOps', 'Data']);
 
 function isClosed(issue: GhIssue): boolean {
   return String(issue.state).toUpperCase() === 'CLOSED';

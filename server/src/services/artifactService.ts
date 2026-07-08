@@ -22,6 +22,7 @@ import {
 import { generateArtifact } from '../llm/openrouter.ts';
 import { logger } from '../lib/logger.ts';
 import { emitMetric } from '../lib/metrics.ts';
+import { invalidateSnapshot } from '../lib/snapshotCache.ts';
 import { consumeRefineOrThrow } from './quotaService.ts';
 import { tenantOpenrouterKey } from './settingsService.ts';
 import { configForRepository, getRepositoryOr404 } from './repositoryService.ts';
@@ -91,6 +92,7 @@ export async function createArtifact(
   const config = await configForRepository(await getRepositoryOr404(tenantId, id));
   await addLabel(config, number, LABEL[kind]);
   await moveStage(config, number, kind);
+  invalidateSnapshot(tenantId, id); // label + etapa mudaram → workspaces releem
   return loadWorkItem(config, 'feature', number);
 }
 
@@ -104,6 +106,7 @@ export async function approvePlan(
 ): Promise<WorkItemView> {
   const config = await configForRepository(await getRepositoryOr404(tenantId, id));
   await addLabel(config, number, READY_LABEL);
+  invalidateSnapshot(tenantId, id);
   return loadWorkItem(config, 'feature', number);
 }
 
@@ -115,6 +118,7 @@ export async function decomposeFeature(
 ): Promise<WorkItemView> {
   const config = await configForRepository(await getRepositoryOr404(tenantId, id));
   await addLabel(config, number, DECOMPOSE_LABEL);
+  invalidateSnapshot(tenantId, id);
   return loadWorkItem(config, 'feature', number);
 }
 

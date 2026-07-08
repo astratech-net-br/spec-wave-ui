@@ -4,10 +4,20 @@
 // 503 (não configurado).
 
 import type { NextFunction, Request, Response } from 'express';
-import type { CreateFeatureRequest, Level, WorkItemPatch } from '@spec-flow/shared';
+import type {
+  CreateFeatureRequest,
+  Level,
+  Priority,
+  StageName,
+  WorkItemPatch,
+} from '@spec-flow/shared';
+import { STAGE_NAMES } from '@spec-flow/shared';
 import {
   createFeatureForRepository,
+  deleteWorkItemForRepository,
   loadWorkItemForRepository,
+  setPriorityForRepository,
+  setStageForRepository,
   updateWorkItemForRepository,
 } from '../services/workItemService.ts';
 import { HttpError } from '../lib/errors.ts';
@@ -109,6 +119,121 @@ export async function updateRepositoryWorkItem(
       return;
     }
     next(err); // erro inesperado → handler central (500)
+  }
+}
+
+// Valida os params comuns (:id, :level, :number) das rotas de workspace.
+// Devolve null (resposta 400 já enviada) quando algo é inválido.
+function workItemParamsOr400(
+  req: Request,
+  res: Response,
+): { repoId: string; level: Level; n: number } | null {
+  const { id, level, number } = req.params;
+  if (!isValidRepoId(id)) {
+    res.status(400).json({ error: `Repositório inválido: "${id}".` });
+    return null;
+  }
+  if (!LEVELS.includes(level as Level)) {
+    res.status(400).json({ error: `Nível inválido: "${level}". Use epic, feature ou story.` });
+    return null;
+  }
+  const n = Number(number);
+  if (!Number.isInteger(n) || n <= 0) {
+    res.status(400).json({ error: `Número inválido: "${number}".` });
+    return null;
+  }
+  return { repoId: id, level: level as Level, n };
+}
+
+// PATCH /api/repositories/:id/workitems/:level/:number/priority — troca os
+// labels P0–P3 da issue. Corpo: { priority: 'P0'…'P3' | null } (null remove).
+export async function setWorkItemPriority(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const params = workItemParamsOr400(req, res);
+  if (!params) return;
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  if (!('priority' in body)) {
+    res.status(400).json({ error: 'Informe priority (P0–P3 ou null para remover).' });
+    return;
+  }
+  if (body.priority !== null && !PRIORITIES.includes(body.priority as string)) {
+    res.status(400).json({ error: `Prioridade inválida. Use uma de: ${PRIORITIES.join(', ')} ou null.` });
+    return;
+  }
+
+  try {
+    await setPriorityForRepository(
+      tenantOf(req).tenantId,
+      params.repoId,
+      params.n,
+      (body.priority as Priority | null) ?? null,
+    );
+    res.status(204).end();
+  } catch (err) {
+    if (err instanceof HttpError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    next(err);
+  }
+}
+
+// DELETE /api/repositories/:id/workitems/:level/:number — "Delete" do Backlog:
+// fecha a issue no GitHub (issues não são deletáveis pela API).
+export async function deleteRepositoryWorkItem(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const params = workItemParamsOr400(req, res);
+  if (!params) return;
+
+  try {
+    await deleteWorkItemForRepository(tenantOf(req).tenantId, params.repoId, params.n);
+    res.status(204).end();
+  } catch (err) {
+    if (err instanceof HttpError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    next(err);
+  }
+}
+
+// PATCH /api/repositories/:id/workitems/:level/:number/stage — move a etapa
+// canônica do item no board. Corpo: { stage: StageName }.
+export async function setWorkItemStage(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const params = workItemParamsOr400(req, res);
+  if (!params) return;
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  if (!STAGE_NAMES.includes(body.stage as StageName)) {
+    res.status(400).json({ error: `Etapa inválida. Use uma de: ${STAGE_NAMES.join(', ')}.` });
+    return;
+  }
+
+  try {
+    await setStageForRepository(
+      tenantOf(req).tenantId,
+      params.repoId,
+      params.n,
+      body.stage as StageName,
+    );
+    res.status(204).end();
+  } catch (err) {
+    if (err instanceof HttpError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    next(err);
   }
 }
 

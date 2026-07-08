@@ -6,11 +6,15 @@ import type {
   CreateFeatureRequest,
   EpicSummary,
   Level,
+  Priority,
   RepositoryEpics,
+  StageName,
   WorkItemPatch,
   WorkItemView,
 } from '@spec-flow/shared';
+import { PRIORITIES } from '@spec-flow/shared';
 import {
+  addLabel,
   addProjectItem,
   addSubIssue,
   createIssue,
@@ -21,12 +25,18 @@ import {
   fetchIssueRef,
   fetchIssueTitle,
   fetchIssueTree,
+  fetchProjectItemId,
   fetchSingleSelectField,
   moveProjectStage,
+  removeLabel,
   updateIssue,
+  updateIssueState,
   type GitHubConfig,
 } from '../github/client.ts';
 import { logger } from '../lib/logger.ts';
+import { HttpError } from '../lib/errors.ts';
+import { normalizeStage } from '../lib/status.ts';
+import { invalidateSnapshot } from '../lib/snapshotCache.ts';
 import {
   adaptEpic,
   adaptFeature,
@@ -160,7 +170,9 @@ export async function updateWorkItemForRepository(
   patch: WorkItemPatch,
 ): Promise<WorkItemView> {
   const record = await getRepositoryOr404(tenantId, id);
-  return updateWorkItem(await configForRepository(record), level, number, patch);
+  const view = await updateWorkItem(await configForRepository(record), level, number, patch);
+  invalidateSnapshot(tenantId, id);
+  return view;
 }
 
 // Monta o corpo da Feature, espelhando o `spec-wave issue`: referência ao pai
@@ -265,7 +277,99 @@ export async function createFeatureForRepository(
     );
   });
 
+  invalidateSnapshot(tenantId, id);
   return loadWorkItem(config, 'epic', epicNumber);
+}
+
+// --- Mutações de workspace (RFC-003) ---
+
+// Define/remove a prioridade de um work item: swap dos labels P0–P3 (fonte de
+// verdade) + best-effort no campo "Priority" do board. Invalida o snapshot.
+export async function setPriorityForRepository(
+  tenantId: string,
+  id: string,
+  number: number,
+  priority: Priority | null,
+): Promise<void> {
+  const config = await configForRepository(await getRepositoryOr404(tenantId, id));
+
+  // Remove os demais P-labels (idempotente: ausente = no-op) e aplica o novo.
+  for (const p of PRIORITIES) {
+    if (p !== priority) await removeLabel(config, number, p);
+  }
+  if (priority) await addLabel(config, number, priority);
+
+  // Board (best-effort): espelha no campo single-select "Priority" se existir.
+  if (priority && config.project) {
+    try {
+      const itemId = await fetchProjectItemId(config, number, config.project.projectId);
+      if (itemId) {
+        const field = await fetchSingleSelectField(config, config.project.projectId, 'Priority');
+        const optionId = field?.options[priority];
+        if (field && optionId) {
+          await moveProjectStage(config, config.project.projectId, itemId, field.id, optionId);
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        `Issue #${number}: prioridade aplicada nos labels, mas falhou no board: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  invalidateSnapshot(tenantId, id);
+}
+
+// "Delete" do Backlog (RFC-003): fecha a issue (a API do GitHub não deleta
+// issues). Invalida o snapshot.
+export async function deleteWorkItemForRepository(
+  tenantId: string,
+  id: string,
+  number: number,
+): Promise<void> {
+  const config = await configForRepository(await getRepositoryOr404(tenantId, id));
+  await updateIssueState(config, number, 'closed');
+  invalidateSnapshot(tenantId, id);
+}
+
+// Move a etapa canônica de um work item no board (Start Story, aprovar/devolver
+// UAT, mover no Technical Backlog). Resolve a opção crua do board cujo nome
+// normaliza para a StageName pedida; issue fora do board é adicionada antes.
+export async function setStageForRepository(
+  tenantId: string,
+  id: string,
+  number: number,
+  stage: StageName,
+): Promise<void> {
+  const record = await getRepositoryOr404(tenantId, id);
+  const config = await configForRepository(record);
+  const project = config.project;
+  if (!project) {
+    throw new HttpError(
+      409,
+      'Este repositório não tem um Projects v2 vinculado — vincule um board na edição do repositório para mover etapas.',
+    );
+  }
+
+  const option = Object.entries(project.stageOptions).find(
+    ([name]) => normalizeStage(name) === stage,
+  );
+  if (!option) {
+    throw new HttpError(
+      422,
+      `O board deste repositório não tem uma coluna correspondente à etapa "${stage}".`,
+    );
+  }
+
+  let itemId = await fetchProjectItemId(config, number, project.projectId);
+  if (!itemId) {
+    // Issue ainda fora do board → adiciona (precisa do node id do conteúdo).
+    const ref = await fetchIssueRef(config, number);
+    itemId = await addProjectItem(config, project.projectId, ref.nodeId);
+  }
+
+  await moveProjectStage(config, project.projectId, itemId, project.etapaFieldId, option[1]);
+  invalidateSnapshot(tenantId, id);
 }
 
 // Lista os épicos (issues [EPIC]) de um repositório do tenant.

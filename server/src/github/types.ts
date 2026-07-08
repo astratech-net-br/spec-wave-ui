@@ -50,3 +50,45 @@ export interface GhEpicPayload {
   // ser informado explicitamente. Opcional — o adapter tem fallbacks.
   team?: string;
 }
+
+// --- Snapshot achatado do repositório (RFC-003, workspaces) ---
+
+// PR que fecha uma issue (closedByPullRequestsReferences), forma crua.
+export interface GhPullRequestRef {
+  number: number;
+  title: string;
+  url: string;
+  state: 'OPEN' | 'CLOSED' | 'MERGED';
+  isDraft: boolean;
+  reviewDecision: string | null;
+  reviewers: string[]; // logins (User) / nomes (Team) com review solicitado
+  createdAt: string;
+}
+
+// Issue achatada da query de snapshot: sem subárvore — hierarquia via `parentNumber`
+// e progresso via `subIssuesSummary` (agregado nativo do GitHub).
+export interface GhSnapshotIssue {
+  number: number;
+  title: string;
+  url: string;
+  state: 'OPEN' | 'CLOSED';
+  createdAt: string;
+  labels: string[];
+  assignees: GhUser[];
+  milestone: { number: number; title: string } | null;
+  parentNumber: number | null;
+  subIssuesSummary: { total: number; completed: number } | null;
+  // Valores single-select do board: nome do CAMPO → nome da OPÇÃO (cru).
+  projectFieldValues: Record<string, string>;
+  prs: GhPullRequestRef[];
+}
+
+// Milestone do repositório (REST /milestones?state=all), forma crua relevante.
+export interface GhMilestoneSummary {
+  number: number;
+  title: string;
+  dueOn: string | null;
+  state: 'open' | 'closed';
+  openIssues: number;
+  closedIssues: number;
+}

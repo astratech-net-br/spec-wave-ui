@@ -1,10 +1,11 @@
 // Router de hash mínimo (sem dependência). Rotas:
 //   #/dashboard                 → página inicial (lista de repositórios)
+//   #/ws/:role/:page            → workspace por papel (RFC-003: pm | tech | dev)
 //   #/repos/:id/epics           → lista de épicos de um repositório
 //   #/repos/:id/:level/:number  → work item (epic/feature/story) daquele repo
 // A raiz (hash vazio) canoniza para #/dashboard.
 
-import type { Level } from '@spec-flow/shared';
+import type { Level, WorkspaceRole } from '@spec-flow/shared';
 
 // Rota é uma união discriminada por `view`. Telas de épicos/work item carregam
 // o id do repositório (ULID), de onde o backend deriva owner/repo.
@@ -15,7 +16,10 @@ export type Route =
   | { view: 'repo-epics'; repoId: string }
   | { view: 'item'; repoId: string; level: Level; number: number }
   | { view: 'settings' }
-  | { view: 'invite'; code: string };
+  | { view: 'invite'; code: string }
+  // Página do workspace ('dashboard', 'backlog'…). Página desconhecida cai no
+  // dashboard do papel — validação fica no WorkspaceLayout (que conhece a nav).
+  | { view: 'workspace'; role: WorkspaceRole; page: string };
 
 export const DASHBOARD_ROUTE: Route = { view: 'dashboard' };
 export const DASHBOARD_HREF = '#/dashboard';
@@ -25,6 +29,7 @@ export const hrefForRepoEdit = (repoId: string): string => `#/repositories/${rep
 export const DEFAULT_ROUTE: Route = DASHBOARD_ROUTE;
 
 const LEVELS: Level[] = ['epic', 'feature', 'story'];
+const WORKSPACE_ROLES: WorkspaceRole[] = ['pm', 'tech', 'dev'];
 
 // Faz parse do hash para uma Route. Inválido/vazio → DEFAULT_ROUTE.
 export function parseHash(hash: string): Route {
@@ -34,6 +39,9 @@ export function parseHash(hash: string): Route {
   if (a === 'dashboard') return DASHBOARD_ROUTE;
   if (a === 'settings') return { view: 'settings' };
   if (a === 'invite' && b) return { view: 'invite', code: b };
+  if (a === 'ws' && WORKSPACE_ROLES.includes(b as WorkspaceRole)) {
+    return { view: 'workspace', role: b as WorkspaceRole, page: c || 'dashboard' };
+  }
   if (a === 'repositories') {
     if (b === 'new') return { view: 'repo-new' };
     if (b && c === 'edit') return { view: 'repo-edit', repoId: b };
@@ -55,3 +63,5 @@ export function parseHash(hash: string): Route {
 export const hrefForEpics = (repoId: string): string => `#/repos/${repoId}/epics`;
 export const hrefForItem = (repoId: string, level: Level, n: number): string =>
   `#/repos/${repoId}/${level}/${n}`;
+export const hrefForWorkspace = (role: WorkspaceRole, page = 'dashboard'): string =>
+  `#/ws/${role}/${page}`;

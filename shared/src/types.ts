@@ -153,3 +153,92 @@ export interface ArtifactRefineResponse {
 export interface ArtifactSaveRequest {
   content: string;
 }
+
+// --- Workspaces por papel (RFC-003) ---
+// O papel é um MODO DE VISUALIZAÇÃO do client (switcher, localStorage) — não é
+// permissão. Não confundir com o role owner/member do tenant (billing).
+export type WorkspaceRole = 'pm' | 'tech' | 'dev';
+
+// Etapas canônicas do pipeline (RFC-003). No GitHub elas são opções do campo
+// single-select "Etapa" do Projects v2 (nomes crus, com emoji); o server
+// normaliza o nome cru para este enum ao montar o snapshot.
+export type StageName =
+  | 'Backlog'
+  | 'Spec'
+  | 'Plan'
+  | 'Ready'
+  | 'Development'
+  | 'Code Review'
+  | 'QA'
+  | 'UAT'
+  | 'Done';
+
+export const STAGE_NAMES: StageName[] = [
+  'Backlog',
+  'Spec',
+  'Plan',
+  'Ready',
+  'Development',
+  'Code Review',
+  'QA',
+  'UAT',
+  'Done',
+];
+
+// Prioridade = label P0–P3 da issue (fonte de verdade no GitHub).
+export type Priority = 'P0' | 'P1' | 'P2' | 'P3';
+export const PRIORITIES: Priority[] = ['P0', 'P1', 'P2', 'P3'];
+
+// Milestone do GitHub (REST), com contagem de issues para os widgets.
+export interface MilestoneSummary {
+  number: number;
+  title: string;
+  dueOn: string | null; // ISO
+  state: 'open' | 'closed';
+  openCount: number;
+  closedCount: number;
+}
+
+// PR vinculado a uma issue via closing reference ("closes #n").
+export interface PullRequestRef {
+  number: number;
+  title: string;
+  url: string;
+  state: 'open' | 'closed' | 'merged';
+  isDraft: boolean;
+  // GitHub PullRequestReviewDecision: APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | null
+  reviewDecision: string | null;
+  reviewers: string[]; // logins/nomes com review solicitado
+  createdAt: string; // ISO
+}
+
+// Item achatado do snapshot — uma issue do repositório com os campos que as
+// páginas de workspace filtram/agrupam. `level` é inferido (labels de tipo +
+// cadeia de pais); sem inferência possível → 'unknown'.
+export interface SnapshotItem {
+  number: number;
+  title: string; // sem prefixo de tipo
+  url: string;
+  state: 'open' | 'closed';
+  level: Level | 'task' | 'unknown';
+  labels: string[];
+  priority: Priority | null;
+  area: string | null;
+  stage: StageName | null; // normalizado; null = fora do board e issue aberta
+  stageRaw: string | null; // nome cru da opção no board (ex.: "📋 Spec")
+  milestone: { number: number; title: string } | null;
+  assignees: { login: string; name: string | null }[];
+  parentNumber: number | null;
+  createdAt: string; // ISO
+  progress: { total: number; completed: number } | null; // subIssuesSummary
+  prs: PullRequestRef[];
+}
+
+// Payload agregado de GET /api/repositories/:id/snapshot — uma leitura única do
+// repositório que alimenta todas as páginas de workspace (filtros client-side).
+export interface ProjectSnapshot {
+  repository: Repository;
+  generatedAt: string; // ISO
+  milestones: MilestoneSummary[];
+  items: SnapshotItem[];
+}

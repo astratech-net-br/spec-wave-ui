@@ -47,38 +47,21 @@ function systemPrompt(kind: ArtifactKind): string {
   ].join('\n');
 }
 
-interface GenerateArgs {
-  kind: ArtifactKind;
-  currentContent: string | null; // conteúdo atual do artefato (null/'' = primeira versão)
-  userPrompt: string; // instrução de ajuste do usuário
-  spec?: string | null; // só para kind 'plan': a spec atual como contexto
-  apiKeyOverride?: string | null; // chave OpenRouter própria do tenant (fase 3)
-}
-
-export async function generateArtifact({
-  kind,
-  currentContent,
-  userPrompt,
-  spec,
-  apiKeyOverride,
-}: GenerateArgs): Promise<string> {
-  // Chave do tenant (se cadastrada) > plataforma (Secrets Manager/env).
+// Chamada genérica de chat (system + user → texto). Base do refino de artefato
+// e dos AI insights/summaries dos workspaces (RFC-003). `maxTokens` menor que o
+// padrão encurta a resposta — importante sob o teto de 29 s do API Gateway.
+export async function generateText(args: {
+  system: string;
+  user: string;
+  apiKeyOverride?: string | null;
+  maxTokens?: number;
+}): Promise<string> {
   const apiKey =
-    apiKeyOverride || (await resolveSecret(config.openrouter.apiKey, config.openrouter.secretArn));
+    args.apiKeyOverride ||
+    (await resolveSecret(config.openrouter.apiKey, config.openrouter.secretArn));
   if (!apiKey) {
     throw new NotConfiguredError('Configure a chave do OpenRouter no servidor.');
   }
-
-  const userParts: string[] = [];
-  if (kind === 'plan' && spec && spec.trim().length > 0) {
-    userParts.push('## Especificação funcional (spec.md) de contexto\n', spec, '\n---\n');
-  }
-  userParts.push(
-    currentContent && currentContent.trim().length > 0
-      ? `## Documento atual\n\n${currentContent}\n\n---\n`
-      : '## Documento atual\n\n(ainda não existe — gere a primeira versão)\n\n---\n',
-  );
-  userParts.push(`## Pedido de ajuste\n\n${userPrompt}`);
 
   let res: Response;
   try {
@@ -90,10 +73,10 @@ export async function generateArtifact({
       },
       body: JSON.stringify({
         model: config.openrouter.model,
-        max_tokens: config.openrouter.maxTokens,
+        max_tokens: args.maxTokens ?? config.openrouter.maxTokens,
         messages: [
-          { role: 'system', content: systemPrompt(kind) },
-          { role: 'user', content: userParts.join('\n') },
+          { role: 'system', content: args.system },
+          { role: 'user', content: args.user },
         ],
       }),
     });
@@ -118,4 +101,37 @@ export async function generateArtifact({
   }
   // Defesa: alguns modelos ignoram a instrução e embrulham tudo em ```markdown.
   return stripWrappingCodeFence(content.trim()) ?? '';
+}
+
+interface GenerateArgs {
+  kind: ArtifactKind;
+  currentContent: string | null; // conteúdo atual do artefato (null/'' = primeira versão)
+  userPrompt: string; // instrução de ajuste do usuário
+  spec?: string | null; // só para kind 'plan': a spec atual como contexto
+  apiKeyOverride?: string | null; // chave OpenRouter própria do tenant (fase 3)
+}
+
+export async function generateArtifact({
+  kind,
+  currentContent,
+  userPrompt,
+  spec,
+  apiKeyOverride,
+}: GenerateArgs): Promise<string> {
+  const userParts: string[] = [];
+  if (kind === 'plan' && spec && spec.trim().length > 0) {
+    userParts.push('## Especificação funcional (spec.md) de contexto\n', spec, '\n---\n');
+  }
+  userParts.push(
+    currentContent && currentContent.trim().length > 0
+      ? `## Documento atual\n\n${currentContent}\n\n---\n`
+      : '## Documento atual\n\n(ainda não existe — gere a primeira versão)\n\n---\n',
+  );
+  userParts.push(`## Pedido de ajuste\n\n${userPrompt}`);
+
+  return generateText({
+    system: systemPrompt(kind),
+    user: userParts.join('\n'),
+    apiKeyOverride,
+  });
 }
