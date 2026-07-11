@@ -38,6 +38,7 @@ new ObservabilityStack(app, 'SpecWaveObservability', {
   httpApi: api.httpApi,
   apiFn: api.apiFn,
   webhookFn: api.webhookFn,
+  refineWorkerFn: api.refineWorkerFn,
   table: stateful.table,
 });
 

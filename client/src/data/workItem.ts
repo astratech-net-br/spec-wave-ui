@@ -17,8 +17,26 @@ import { apiFetch } from './apiFetch';
 const REQUEST_TIMEOUT_MS = 10_000;
 // Criar a feature encadeia várias chamadas ao GitHub (issue + sub-issue + board).
 const CREATE_FEATURE_TIMEOUT_MS = 30_000;
-// O refino chama a LLM (OpenRouter) — pode levar dezenas de segundos.
-const LLM_TIMEOUT_MS = 120_000;
+// Refino assíncrono (202 + job): a UI faz polling do status. O worker roda a LLM
+// fora do teto de 29s do API Gateway; aqui esperamos no máximo 5 min.
+const REFINE_MAX_WAIT_MS = 300_000;
+const REFINE_POLL_INTERVAL_MS = 2_000;
+
+// setTimeout como Promise, cancelável por AbortSignal (usado no polling).
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'));
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(t);
+        reject(new DOMException('Aborted', 'AbortError'));
+      },
+      { once: true },
+    );
+  });
+}
 
 function isWorkItemView(value: unknown): value is WorkItemView {
   if (typeof value !== 'object' || value === null) return false;
@@ -182,8 +200,9 @@ export async function createWorkItem(
   return (await res.json()) as CreatedWorkItem;
 }
 
-// Refina o artefato: registra o prompt como comentário e devolve o texto gerado
-// pela LLM (sem salvar). Timeout estendido (chamada à LLM).
+// Refina o artefato (assíncrono): enfileira o refino (202 { jobId }) e faz polling
+// do status até done/error, devolvendo o texto gerado (sem salvar). O worker roda
+// a LLM sem o teto de 29s do API Gateway. `signal` cancela o enqueue e o polling.
 export async function refineArtifact(
   repoId: string,
   number: number,
@@ -192,35 +211,43 @@ export async function refineArtifact(
   base?: string,
   signal?: AbortSignal,
 ): Promise<string> {
-  const timeout = new AbortController();
-  const timer = setTimeout(() => timeout.abort(), LLM_TIMEOUT_MS);
-  const onExternalAbort = () => timeout.abort();
-  signal?.addEventListener('abort', onExternalAbort);
+  // 1) Enfileira — resposta rápida (202 { jobId }).
+  const enqueue = await apiFetch(`${artifactBase(repoId, number, kind)}/refine`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(base === undefined ? { prompt } : { prompt, base }),
+    signal,
+  });
+  if (!enqueue.ok) {
+    throw new Error(await errorMessage(enqueue));
+  }
+  const { jobId } = (await enqueue.json()) as { jobId?: unknown };
+  if (typeof jobId !== 'string') {
+    throw new Error('Resposta da API em formato inesperado.');
+  }
 
-  try {
-    const res = await apiFetch(`${artifactBase(repoId, number, kind)}/refine`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(base === undefined ? { prompt } : { prompt, base }),
-      signal: timeout.signal,
-    });
+  // 2) Polling do job até done/error (ou timeout do client).
+  const statusUrl = `${artifactBase(repoId, number, kind)}/refine/${jobId}`;
+  const deadline = Date.now() + REFINE_MAX_WAIT_MS;
+  while (Date.now() < deadline) {
+    await delay(REFINE_POLL_INTERVAL_MS, signal);
+    const res = await apiFetch(statusUrl, { headers: { Accept: 'application/json' }, signal });
     if (!res.ok) {
       throw new Error(await errorMessage(res));
     }
-    const json = (await res.json()) as { content?: unknown };
-    if (typeof json.content !== 'string') {
-      throw new Error('Resposta da API em formato inesperado.');
+    const job = (await res.json()) as { status?: string; content?: unknown; error?: string };
+    if (job.status === 'done') {
+      if (typeof job.content !== 'string') {
+        throw new Error('Resposta da API em formato inesperado.');
+      }
+      return job.content;
     }
-    return json.content;
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError' && !signal?.aborted) {
-      throw new Error('Tempo de requisição esgotado.');
+    if (job.status === 'error') {
+      throw new Error(job.error || 'Falha ao gerar o refino.');
     }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-    signal?.removeEventListener('abort', onExternalAbort);
+    // status 'pending' → continua o polling
   }
+  throw new Error('Tempo de refino esgotado.');
 }
 
 // Salva o artefato (commit do arquivo) e devolve o WorkItemView atualizado.

@@ -392,6 +392,72 @@ export async function getMonthlyUsage(tenantId: string, month: string): Promise<
   return (out.Item as { refines?: number } | undefined)?.refines ?? 0;
 }
 
+// ---------- Job de refino assíncrono (202 + polling) ----------
+
+export interface RefineJobRecord {
+  tenantId: string;
+  jobId: string;
+  status: 'pending' | 'done' | 'error';
+  kind: string; // 'spec' | 'plan'
+  content?: string;
+  error?: string;
+  createdAt: string; // ISO
+  ttl: number; // epoch seconds — TTL nativo do DynamoDB (~1h)
+}
+
+const refineJobKey = (tenantId: string, jobId: string) => ({
+  PK: `TENANT#${tenantId}`,
+  SK: `REFINEJOB#${jobId}`,
+});
+
+export async function putRefineJob(rec: RefineJobRecord): Promise<void> {
+  await doc().send(
+    new PutCommand({ TableName: TABLE, Item: { ...refineJobKey(rec.tenantId, rec.jobId), ...rec } }),
+  );
+}
+
+// Move o job para done/error, gravando content ou error. `status`/`error` são
+// palavras reservadas do DynamoDB → alias com ExpressionAttributeNames.
+export async function updateRefineJob(
+  tenantId: string,
+  jobId: string,
+  patch: { status: 'done' | 'error'; content?: string; error?: string },
+): Promise<void> {
+  const sets = ['#s = :s'];
+  const names: Record<string, string> = { '#s': 'status' };
+  const values: Record<string, unknown> = { ':s': patch.status };
+  if (patch.content !== undefined) {
+    sets.push('content = :c');
+    values[':c'] = patch.content;
+  }
+  if (patch.error !== undefined) {
+    sets.push('#e = :e');
+    names['#e'] = 'error';
+    values[':e'] = patch.error;
+  }
+  await doc().send(
+    new UpdateCommand({
+      TableName: TABLE,
+      Key: refineJobKey(tenantId, jobId),
+      UpdateExpression: `SET ${sets.join(', ')}`,
+      ExpressionAttributeNames: names,
+      ExpressionAttributeValues: values,
+      ConditionExpression: 'attribute_exists(PK)',
+    }),
+  );
+}
+
+// TTL do Dynamo é eventual — reforça a expiração na leitura (como consumeState).
+export async function getRefineJob(tenantId: string, jobId: string): Promise<RefineJobRecord | null> {
+  const out = await doc().send(
+    new GetCommand({ TableName: TABLE, Key: refineJobKey(tenantId, jobId) }),
+  );
+  const job = out.Item as RefineJobRecord | undefined;
+  if (!job) return null;
+  if (job.ttl * 1000 < Date.now()) return null;
+  return job;
+}
+
 // ---------- Membros do tenant (fase 3) ----------
 
 export interface MemberRecord {

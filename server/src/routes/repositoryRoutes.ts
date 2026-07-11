@@ -30,6 +30,7 @@ import {
   approveFeaturePlan,
   createFeatureArtifact,
   decomposeFeatureHandler,
+  getRefineJobStatus,
   refineFeatureArtifact,
   saveFeatureArtifact,
 } from '../controllers/ArtifactController.ts';
@@ -117,6 +118,11 @@ repositoryRoutes.post(
 repositoryRoutes.post(
   '/repositories/:id/workitems/feature/:number/:artifact/refine',
   refineFeatureArtifact,
+);
+// Polling do refino assíncrono (202 + job): status do job de refino.
+repositoryRoutes.get(
+  '/repositories/:id/workitems/feature/:number/:artifact/refine/:jobId',
+  getRefineJobStatus,
 );
 repositoryRoutes.post(
   '/repositories/:id/workitems/feature/:number/:artifact/save',

@@ -108,6 +108,18 @@ export interface ReorderRequest {
   order: number[];
 }
 
+// Refino assíncrono (job + polling). POST .../refine devolve 202 { jobId }; o
+// client faz polling em GET .../refine/:jobId até status !== 'pending'.
+export type RefineJobStatus = 'pending' | 'done' | 'error';
+export interface RefineEnqueueResponse {
+  jobId: string;
+}
+export interface RefineJobResponse {
+  status: RefineJobStatus;
+  content?: string; // presente quando status === 'done'
+  error?: string; // presente quando status === 'error'
+}
+
 // POST /api/repositories/:id/workitems — cria um work item de qualquer tipo,
 // opcionalmente como sub-issue de `parentNumber`, e o adiciona ao board.
 export interface CreateWorkItemRequest {
