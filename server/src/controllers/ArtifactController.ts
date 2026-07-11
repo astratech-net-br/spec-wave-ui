@@ -8,8 +8,9 @@ import {
   approvePlan,
   createArtifact,
   decomposeFeature,
-  refineArtifact,
+  getRefineJobForTenant,
   saveArtifact,
+  startRefineJob,
 } from '../services/artifactService.ts';
 import { HttpError } from '../lib/errors.ts';
 import { isValidRepoId } from '../lib/validation.ts';
@@ -114,7 +115,9 @@ export async function decomposeFeatureHandler(
   }
 }
 
-// POST .../workitems/feature/:number/:artifact/refine  body: { prompt }
+// POST .../workitems/feature/:number/:artifact/refine  body: { prompt, base? }
+// Enfileira o refino (async) e devolve 202 { jobId }. A LLM roda num worker sem
+// o teto de 29s do API Gateway; o client faz polling em getRefineJobStatus.
 export async function refineFeatureArtifact(
   req: Request,
   res: Response,
@@ -135,8 +138,42 @@ export async function refineFeatureArtifact(
 
   try {
     const base = typeof body.base === 'string' ? body.base : undefined;
-    const content = await refineArtifact(tenantOf(req).tenantId, p.repoId, p.number, p.kind, body.prompt.trim(), base);
-    res.json({ content });
+    const result = await startRefineJob(
+      tenantOf(req).tenantId,
+      p.repoId,
+      p.number,
+      p.kind,
+      body.prompt.trim(),
+      base,
+    );
+    res.status(202).json(result); // { jobId }
+  } catch (err) {
+    handleError(err, res, next);
+  }
+}
+
+// GET .../workitems/feature/:number/:artifact/refine/:jobId → status do job de
+// refino (polling). 404 se o job não existir ou tiver expirado.
+export async function getRefineJobStatus(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const p = parseParams(req, res);
+  if (!p) return;
+  const jobId = req.params.jobId;
+  if (typeof jobId !== 'string' || jobId.length === 0) {
+    res.status(400).json({ error: 'jobId ausente.' });
+    return;
+  }
+
+  try {
+    const job = await getRefineJobForTenant(tenantOf(req).tenantId, jobId);
+    if (!job) {
+      res.status(404).json({ error: 'Job de refino não encontrado ou expirado.' });
+      return;
+    }
+    res.json({ status: job.status, content: job.content, error: job.error });
   } catch (err) {
     handleError(err, res, next);
   }

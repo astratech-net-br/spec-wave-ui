@@ -19,6 +19,7 @@ export interface ObservabilityStackProps extends cdk.StackProps {
   httpApi: apigwv2.HttpApi;
   apiFn: NodejsFunction;
   webhookFn: NodejsFunction;
+  refineWorkerFn: NodejsFunction;
   table: dynamodb.Table;
 }
 
@@ -38,6 +39,7 @@ export class ObservabilityStack extends cdk.Stack {
     const api5xx = props.httpApi.metricServerError({ period: cdk.Duration.minutes(5) });
     const apiErrors = props.apiFn.metricErrors({ period: cdk.Duration.minutes(5) });
     const webhookErrors = props.webhookFn.metricErrors({ period: cdk.Duration.minutes(5) });
+    const refineWorkerErrors = props.refineWorkerFn.metricErrors({ period: cdk.Duration.minutes(5) });
     const apiP90 = props.apiFn.metricDuration({
       period: cdk.Duration.minutes(5),
       statistic: 'p90',
@@ -89,11 +91,21 @@ export class ObservabilityStack extends cdk.Stack {
     alarm(
       new cloudwatch.Alarm(this, 'RefineP90', {
         metric: refineP90,
-        threshold: 25_000,
+        // Refino agora roda no worker assíncrono (timeout 5 min) — sem o teto de
+        // 29s. Alarme aciona perto do timeout (p90 > 4 min = geração patológica).
+        threshold: 240_000,
         evaluationPeriods: 2,
         treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-        alarmDescription:
-          'spec-wave: refine p90 > 25 s — hora de mover o refine para Function URL/assíncrono',
+        alarmDescription: 'spec-wave: refine p90 > 4 min — worker perto do timeout',
+      }),
+    );
+    alarm(
+      new cloudwatch.Alarm(this, 'RefineWorkerErrors', {
+        metric: refineWorkerErrors,
+        threshold: 1,
+        evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        alarmDescription: 'spec-wave: erros no worker de refino (job não concluído)',
       }),
     );
     alarm(
@@ -129,7 +141,7 @@ export class ObservabilityStack extends cdk.Stack {
         width: 12,
       }),
       new cloudwatch.GraphWidget({
-        title: 'Refine — duração p50/p90 (limite 29 s)',
+        title: 'Refine (worker async) — duração p50/p90 e erros',
         left: [
           new cloudwatch.Metric({
             namespace: 'SpecWave',
@@ -139,6 +151,7 @@ export class ObservabilityStack extends cdk.Stack {
           }),
           refineP90,
         ],
+        right: [refineWorkerErrors],
         width: 12,
       }),
       new cloudwatch.GraphWidget({

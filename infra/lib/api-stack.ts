@@ -38,6 +38,7 @@ export class ApiStack extends cdk.Stack {
   readonly httpApi: apigwv2.HttpApi;
   readonly apiFn: NodejsFunction;
   readonly webhookFn: NodejsFunction;
+  readonly refineWorkerFn: NodejsFunction;
 
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
@@ -146,6 +147,28 @@ export class ApiStack extends cdk.Stack {
     this.webhookFn = webhookFn;
     props.table.grantReadWriteData(webhookFn);
 
+    // ---------- Lambda worker do refino assíncrono ----------
+    // Roda a chamada LLM fora do teto de 29s do API Gateway (invocada async pela
+    // ApiFn). Sem request-context → usa o defaultDoc com grant direto na tabela.
+    const refineWorkerFn = new NodejsFunction(this, 'RefineWorkerFn', {
+      runtime: lambda.Runtime.NODEJS_22_X,
+      entry: path.join(serverSrc, 'refineWorker.ts'),
+      handler: 'handler',
+      memorySize: 512,
+      timeout: cdk.Duration.minutes(5),
+      environment: commonEnv,
+      bundling,
+    });
+    this.refineWorkerFn = refineWorkerFn;
+    props.table.grantReadWriteData(refineWorkerFn);
+    props.tenantDataKey.grant(refineWorkerFn, 'kms:Encrypt', 'kms:Decrypt');
+    // Sem retries no invoke async: evita comentário/efeitos duplicados. Falha vira
+    // status=error no job e o usuário re-dispara pela UI.
+    refineWorkerFn.configureAsyncInvoke({ retryAttempts: 0 });
+    // A ApiFn dispara o worker (Event) e recebe o nome dele por env.
+    refineWorkerFn.grantInvoke(apiFn);
+    apiFn.addEnvironment('REFINE_WORKER_FUNCTION_NAME', refineWorkerFn.functionName);
+
     // Leitura dos segredos via policy de IDENTIDADE (na role, deste stack) — o
     // grantRead() do Secret editaria a key policy da CMK no StatefulStack,
     // criando ciclo entre os stacks. A key policy default da CMK delega ao IAM.
@@ -171,7 +194,7 @@ export class ApiStack extends cdk.Stack {
         },
       },
     });
-    for (const fn of [apiFn, webhookFn]) {
+    for (const fn of [apiFn, webhookFn, refineWorkerFn]) {
       fn.addToRolePolicy(readSecrets);
       fn.addToRolePolicy(decryptSecrets);
     }

@@ -8,6 +8,7 @@
 // O artefato é um arquivo do repositório; a geração inicial fica a cargo da
 // GitHub Action (decisão de produto). Aqui só orquestramos a transição e o refino.
 
+import { randomUUID } from 'node:crypto';
 import type { ArtifactKind, WorkItemView } from '@spec-flow/shared';
 import {
   addLabel,
@@ -23,6 +24,8 @@ import { generateArtifact } from '../llm/openrouter.ts';
 import { logger } from '../lib/logger.ts';
 import { emitMetric } from '../lib/metrics.ts';
 import { invalidateSnapshot } from '../lib/snapshotCache.ts';
+import { getRefineJob, putRefineJob, updateRefineJob } from '../db/dynamo.ts';
+import { invokeAsync } from '../lib/lambdaInvoke.ts';
 import { consumeRefineOrThrow } from './quotaService.ts';
 import { tenantOpenrouterKey } from './settingsService.ts';
 import { configForRepository, getRepositoryOr404 } from './repositoryService.ts';
@@ -122,49 +125,101 @@ export async function decomposeFeature(
   return loadWorkItem(config, 'feature', number);
 }
 
-// refine: registra o prompt como comentário, lê o artefato atual (e a spec, no
-// caso do plan, como contexto) e pede à LLM o texto ajustado. NÃO salva.
-export async function refineArtifact(
+// Payload do job de refino — passado ao worker Lambda (Event) ou usado inline
+// no fallback de dev. Não carrega segredos (a chave é re-resolvida no worker).
+export interface RefineJobPayload {
+  tenantId: string;
+  id: string;
+  number: number;
+  kind: ArtifactKind;
+  prompt: string;
+  base?: string;
+  jobId: string;
+}
+
+// startRefine: valida, consome cota (429 síncrono) e cria o job pending; dispara
+// o worker assíncrono (produção) ou roda inline (dev, sem worker). Devolve o
+// jobId — o client faz polling em getRefineJobForTenant.
+export async function startRefineJob(
   tenantId: string,
   id: string,
   number: number,
   kind: ArtifactKind,
   prompt: string,
   base?: string,
-): Promise<string> {
-  const config = await configForRepository(await getRepositoryOr404(tenantId, id));
+): Promise<{ jobId: string }> {
+  await getRepositoryOr404(tenantId, id); // 404 se o repo não for do tenant
 
-  // Cota (fase 3): consome 1 refine do mês ANTES de qualquer efeito colateral.
-  // Tenant com chave OpenRouter própria não consome cota (o custo de LLM é dele).
+  // Cota (fase 3): consome 1 refine do mês ANTES de criar o job (429 imediato).
+  // Tenant com chave OpenRouter própria não consome cota.
   const tenantKey = await tenantOpenrouterKey(tenantId);
   if (!tenantKey) await consumeRefineOrThrow(tenantId);
 
-  await createComment(config, number, `🛠️ **Refino de ${kind} (via UI)**\n\n${prompt}`);
+  const jobId = randomUUID();
+  await putRefineJob({
+    tenantId,
+    jobId,
+    status: 'pending',
+    kind,
+    createdAt: new Date().toISOString(),
+    ttl: Math.floor(Date.now() / 1000) + 3600, // 1h
+  });
 
-  const title = await fetchTitleSafe(config, number);
-  const { specPath, planPath } = await resolveFeaturePaths(config, number, title);
-  const currentPath = kind === 'spec' ? specPath : planPath;
+  const payload: RefineJobPayload = { tenantId, id, number, kind, prompt, base, jobId };
+  const workerFn = process.env.REFINE_WORKER_FUNCTION_NAME;
+  if (workerFn) {
+    await invokeAsync(workerFn, payload); // produção: Lambda separada (sem teto de 29s)
+  } else {
+    await runRefineJob(payload); // dev/local: sem worker → roda inline
+  }
+  return { jobId };
+}
 
-  // `base` (rascunho não salvo) tem precedência; senão lê o arquivo do repo.
-  const currentContent =
-    base !== undefined ? base : await fetchFileContent(config, currentPath).catch(() => null);
-  const spec =
-    kind === 'plan' ? await fetchFileContent(config, specPath).catch(() => null) : null;
-
-  // Mede a duração do refine (decisão fase 2: p90 > 25 s → Function URL ou
-  // padrão assíncrono; teto duro do HTTP API é 29 s). Métrica SpecWave/RefineDurationMs.
+// runRefine (corpo do worker): posta o comentário, lê o artefato atual (e a spec,
+// no plan) e pede à LLM o texto ajustado; grava o resultado no job. NÃO consome
+// cota (já consumida no enqueue) e NÃO lança — erros vão para o job (status=error).
+export async function runRefineJob(payload: RefineJobPayload): Promise<void> {
+  const { tenantId, id, number, kind, prompt, base, jobId } = payload;
   const startedAt = Date.now();
   try {
-    return await generateArtifact({
+    const config = await configForRepository(await getRepositoryOr404(tenantId, id));
+    const tenantKey = await tenantOpenrouterKey(tenantId);
+
+    await createComment(config, number, `🛠️ **Refino de ${kind} (via UI)**\n\n${prompt}`);
+
+    const title = await fetchTitleSafe(config, number);
+    const { specPath, planPath } = await resolveFeaturePaths(config, number, title);
+    const currentPath = kind === 'spec' ? specPath : planPath;
+
+    // `base` (rascunho não salvo) tem precedência; senão lê o arquivo do repo.
+    const currentContent =
+      base !== undefined ? base : await fetchFileContent(config, currentPath).catch(() => null);
+    const spec =
+      kind === 'plan' ? await fetchFileContent(config, specPath).catch(() => null) : null;
+
+    const content = await generateArtifact({
       kind,
       currentContent,
       userPrompt: prompt,
       spec,
       apiKeyOverride: tenantKey,
     });
+    await updateRefineJob(tenantId, jobId, { status: 'done', content });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Falha no refino.';
+    logger.error(`Refino job ${jobId} (feature #${number}, ${kind}) falhou: ${message}`);
+    await updateRefineJob(tenantId, jobId, { status: 'error', error: message }).catch(() => {
+      /* job pode ter expirado; nada a fazer */
+    });
   } finally {
+    // Métrica SpecWave/RefineDurationMs (alarme p90 na observabilidade).
     emitMetric('RefineDurationMs', Date.now() - startedAt, 'Milliseconds', { kind });
   }
+}
+
+// Leitura do job para o polling (respeitando o TTL). Escopo do tenant via PK.
+export async function getRefineJobForTenant(tenantId: string, jobId: string) {
+  return getRefineJob(tenantId, jobId);
 }
 
 // save: commita o conteúdo no arquivo (branch padrão) e devolve o WorkItemView
