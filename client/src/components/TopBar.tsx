@@ -1,7 +1,6 @@
 import type { Person, WorkItemType } from '@spec-flow/shared';
 import { Avatar } from './Avatar';
-import { UserAvatar } from './UserAvatar';
-import { useSession } from '../hooks/useSession';
+import { ProfileMenu } from './ProfileMenu';
 import { TypeBadge } from './TypeBadge';
 
 // Crumb com href já resolvido pela tela (sem href = segmento atual).
@@ -35,8 +34,6 @@ function CommentIcon() {
 }
 
 export function TopBar({ breadcrumb, owner }: TopBarProps) {
-  const session = useSession();
-
   return (
     <header className="topbar">
       <div className="topbar__left">
@@ -78,17 +75,8 @@ export function TopBar({ breadcrumb, owner }: TopBarProps) {
           size={30}
           title={owner.name}
         />
-        {/* Menu de perfil: só para usuários autenticados (RN001). */}
-        {session.authenticated && session.user && (
-          <button
-            type="button"
-            className="profile-trigger"
-            role="button"
-            aria-label={`Menu de perfil de ${session.user.name}`}
-          >
-            <UserAvatar user={session.user} size={30} />
-          </button>
-        )}
+        {/* Menu de perfil: avatar + dropdown; só para autenticados (RN001). */}
+        <ProfileMenu />
       </div>
     </header>
   );

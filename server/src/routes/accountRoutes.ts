@@ -4,6 +4,7 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { HttpError } from '../lib/errors.ts';
 import { requireOwner, tenantOf } from '../middleware/auth.ts';
+import { getTenant } from '../db/dynamo.ts';
 import { usageSummary } from '../services/quotaService.ts';
 import { createCheckoutSession, createPortalSession } from '../services/billingService.ts';
 import { acceptInvite, createInvite, teamOverview } from '../services/teamService.ts';
@@ -54,6 +55,19 @@ accountRoutes.post(
       .catch((err) => handleError(err, res, next));
   },
 );
+
+// ---------- Tenant ativo ----------
+
+// GET /api/tenant/active → dados do tenant ativo na sessão (menu de perfil,
+// Story #70). O tenant vem do claim custom:tenant_id via middleware; o nome é
+// lido do DynamoDB. Tenant sem registro META → nome vazio (o client mostra o
+// placeholder de CE002).
+accountRoutes.get('/tenant/active', (req: Request, res: Response, next: NextFunction) => {
+  const { tenantId } = tenantOf(req);
+  getTenant(tenantId)
+    .then((tenant) => res.json({ id: tenantId, name: tenant?.name ?? '' }))
+    .catch((err) => handleError(err, res, next));
+});
 
 // ---------- Time / convites ----------
 
