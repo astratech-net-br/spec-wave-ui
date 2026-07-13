@@ -280,6 +280,7 @@ export interface MilestoneSummary {
   state: 'open' | 'closed';
   openCount: number;
   closedCount: number;
+  description: string | null; // corpo do milestone; guarda metadados (início/capacidade) do planner
 }
 
 // PR vinculado a uma issue via closing reference ("closes #n").

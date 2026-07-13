@@ -7,8 +7,11 @@ import type { ReactNode } from 'react';
 import type { SnapshotItem } from '@spec-flow/shared';
 
 export interface Column {
+  /** rótulo do cabeçalho; também serve de chave da coluna (deve ser único). */
   header: string;
   cell: (item: SnapshotItem) => ReactNode;
+  /** conteúdo customizado do `<th>` (ex.: checkbox de selecionar todas); usa `header` só como chave. */
+  headerCell?: ReactNode;
   /** classe aplicada ao `<td>` (e ao `<th>` se `headerClassName` não vier). */
   className?: string;
   headerClassName?: string;
@@ -32,7 +35,7 @@ export function ItemTable({ items, columns, empty }: ItemTableProps) {
           <tr>
             {columns.map((c) => (
               <th key={c.header} className={c.headerClassName ?? c.className}>
-                {c.header}
+                {c.headerCell ?? c.header}
               </th>
             ))}
           </tr>

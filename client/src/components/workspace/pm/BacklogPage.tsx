@@ -5,8 +5,9 @@
 // Stories descendentes dele. Ações de topo: Create Idea (Feature sob um Épico),
 // AI Brainstorm.
 
-import { useMemo, useState } from 'react';
-import type { SnapshotItem } from '@spec-flow/shared';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { Priority, SnapshotItem } from '@spec-flow/shared';
+import { PRIORITIES } from '@spec-flow/shared';
 import type { WorkspacePageProps } from '../types';
 import { ItemTable, type Column } from '../ItemTable';
 import { TypeBadge } from '../TypeBadge';
@@ -21,6 +22,35 @@ import {
   typeSlug,
 } from '../../../lib/workItemType';
 import { createFeature } from '../../../data/workItem';
+import { setPriority } from '../../../data/workspace';
+
+// Checkbox com estado "indeterminado" (parcialmente selecionado) — só via ref.
+function TriCheckbox({
+  checked,
+  indeterminate,
+  onChange,
+  ariaLabel,
+}: {
+  checked: boolean;
+  indeterminate?: boolean;
+  onChange: () => void;
+  ariaLabel: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = !checked && !!indeterminate;
+  }, [checked, indeterminate]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      className="bl-check"
+      checked={checked}
+      onChange={onChange}
+      aria-label={ariaLabel}
+    />
+  );
+}
 
 // Tipos que compõem a árvore de hierarquia (Stories/Tasks ficam de fora).
 const TREE_TYPES = ['initiative', 'epic', 'feature'];
@@ -207,6 +237,9 @@ export function BacklogPage({ repoId, snapshot, refresh }: WorkspacePageProps) {
   const [brainstorm, setBrainstorm] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
+  const [picked, setPicked] = useState<Set<number>>(new Set()); // stories marcadas p/ ação em lote
+  const [savingIds, setSavingIds] = useState<Set<number>>(new Set()); // linhas com gravação em andamento
+  const [bulkSaving, setBulkSaving] = useState(false);
 
   const byNumber = useMemo(() => itemsByNumber(snapshot.items), [snapshot.items]);
 
@@ -257,7 +290,86 @@ export function BacklogPage({ repoId, snapshot, refresh }: WorkspacePageProps) {
       return next;
     });
 
+  const busy = savingIds.size > 0 || bulkSaving;
+
+  const addSaving = (nums: number[]) =>
+    setSavingIds((prev) => new Set([...prev, ...nums]));
+  const clearSaving = (nums: number[]) =>
+    setSavingIds((prev) => {
+      const next = new Set(prev);
+      nums.forEach((n) => next.delete(n));
+      return next;
+    });
+
+  // ---- Multi-seleção para ação em lote ----
+  const pickedVisible = visibleStories.filter((s) => picked.has(s.number));
+  const allChecked = visibleStories.length > 0 && pickedVisible.length === visibleStories.length;
+  const someChecked = pickedVisible.length > 0 && !allChecked;
+
+  const toggleOne = (n: number) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(n)) next.delete(n);
+      else next.add(n);
+      return next;
+    });
+
+  const toggleAll = () =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (allChecked) visibleStories.forEach((s) => next.delete(s.number));
+      else visibleStories.forEach((s) => next.add(s.number));
+      return next;
+    });
+
+  // Grava a prioridade de um item, com spinner na linha até recarregar o snapshot.
+  const setOnePriority = (item: SnapshotItem, priority: Priority | null) => {
+    addSaving([item.number]);
+    setPriority(repoId, item.level, item.number, priority)
+      .then(() => refresh())
+      .catch((err: Error) => alert(err.message))
+      .finally(() => clearSaving([item.number]));
+  };
+
+  // Aplica a prioridade a todas as stories marcadas (uma chamada por item).
+  const applyBulkPriority = (priority: Priority | null) => {
+    const targets = stories.filter((s) => picked.has(s.number));
+    if (targets.length === 0) return;
+    const nums = targets.map((s) => s.number);
+    setBulkSaving(true);
+    addSaving(nums);
+    Promise.all(targets.map((s) => setPriority(repoId, s.level, s.number, priority)))
+      .then(() => {
+        setPicked(new Set());
+        return refresh();
+      })
+      .catch((err: Error) => alert(err.message))
+      .finally(() => {
+        setBulkSaving(false);
+        clearSaving(nums);
+      });
+  };
+
   const columns: Column[] = [
+    {
+      header: 'check',
+      className: 'proj-table__check',
+      headerCell: (
+        <TriCheckbox
+          checked={allChecked}
+          indeterminate={someChecked}
+          onChange={toggleAll}
+          ariaLabel="Selecionar todas as stories visíveis"
+        />
+      ),
+      cell: (item) => (
+        <TriCheckbox
+          checked={picked.has(item.number)}
+          onChange={() => toggleOne(item.number)}
+          ariaLabel={`Selecionar #${item.number}`}
+        />
+      ),
+    },
     {
       header: 'Issue Id',
       className: 'proj-table__id',
@@ -305,12 +417,28 @@ export function BacklogPage({ repoId, snapshot, refresh }: WorkspacePageProps) {
     },
     {
       header: 'Priority',
-      cell: (item) =>
-        item.priority ? (
-          <span className={`chip chip--${item.priority.toLowerCase()}`}>{item.priority}</span>
-        ) : (
-          '—'
-        ),
+      cell: (item) => {
+        const saving = savingIds.has(item.number);
+        return (
+          <span className="bl-priocell">
+            <select
+              className="queue__priosel"
+              value={item.priority ?? ''}
+              disabled={saving || bulkSaving}
+              aria-label={`Prioridade de #${item.number}`}
+              onChange={(e) => setOnePriority(item, (e.target.value || null) as Priority | null)}
+            >
+              <option value="">—</option>
+              {PRIORITIES.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+            {saving && <span className="spinner" aria-hidden="true" />}
+          </span>
+        );
+      },
     },
   ];
 
@@ -399,6 +527,48 @@ export function BacklogPage({ repoId, snapshot, refresh }: WorkspacePageProps) {
             )}
             <span className="ws-section__count">{visibleStories.length}</span>
           </div>
+
+          {picked.size > 0 && (
+            <div className="bl-bulkbar">
+              <span className="bl-bulkbar__count">{picked.size} selecionada(s)</span>
+              <label className="bl-bulkbar__label">
+                Definir prioridade
+                <select
+                  className="queue__priosel"
+                  value=""
+                  disabled={busy}
+                  aria-label="Definir prioridade das selecionadas"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v) applyBulkPriority(v === 'none' ? null : (v as Priority));
+                    e.target.value = '';
+                  }}
+                >
+                  <option value="">Escolher…</option>
+                  {PRIORITIES.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                  <option value="none">Remover prioridade</option>
+                </select>
+              </label>
+              {bulkSaving && (
+                <span className="bl-bulkbar__status" role="status">
+                  <span className="spinner" aria-hidden="true" /> Aplicando…
+                </span>
+              )}
+              <button
+                type="button"
+                className="btn btn--sm"
+                onClick={() => setPicked(new Set())}
+                disabled={busy}
+              >
+                Limpar seleção
+              </button>
+            </div>
+          )}
+
           <ItemTable
             items={visibleStories}
             columns={columns}

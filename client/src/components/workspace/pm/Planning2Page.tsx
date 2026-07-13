@@ -154,7 +154,13 @@ function MilestoneForm({
 
 // ---------- Página ----------
 
-export function Planning2Page({ repoId, snapshot, refresh }: WorkspacePageProps) {
+export function Planning2Page({ repoId, snapshot, refresh, query }: WorkspacePageProps) {
+  // Filtro por milestone vindo do hash (?milestone=N) — usado pelo CTA "Abrir
+  // Planejamento" da tela de Milestones. Estado local para poder limpar.
+  const [milestoneFilter, setMilestoneFilter] = useState<number | null>(() => {
+    const n = query?.milestone ? Number(query.milestone) : NaN;
+    return Number.isInteger(n) ? n : null;
+  });
   // Cópia de trabalho dos items — base da atualização otimista; re-sincroniza
   // quando o snapshot é recarregado.
   const [working, setWorking] = useState<SnapshotItem[]>(snapshot.items);
@@ -223,10 +229,16 @@ export function Planning2Page({ repoId, snapshot, refresh }: WorkspacePageProps)
     nodeNumber == null ? stories : stories.filter((s) => isDescendantOf(s, nodeNumber, byNumber));
 
   const visibleStories = useMemo(
-    () => storiesUnder(selected),
+    () =>
+      storiesUnder(selected).filter(
+        (s) => milestoneFilter == null || s.milestone?.number === milestoneFilter,
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stories, selected, byNumber],
+    [stories, selected, byNumber, milestoneFilter],
   );
+
+  const filterMilestone =
+    milestoneFilter != null ? milestones.find((m) => m.number === milestoneFilter) ?? null : null;
 
   const selectedItem = selected != null ? byNumber.get(selected) ?? null : null;
 
@@ -367,6 +379,22 @@ export function Planning2Page({ repoId, snapshot, refresh }: WorkspacePageProps)
           )}
           <span className="pl2-stories__count">{visibleStories.length} stories</span>
         </div>
+
+        {filterMilestone && (
+          <div className="pl2-msbanner">
+            <span>
+              Planejando release: <strong>{filterMilestone.title}</strong>
+            </span>
+            <button
+              type="button"
+              className="pl2-msbanner__clear"
+              onClick={() => setMilestoneFilter(null)}
+              aria-label="Limpar filtro de milestone"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         <div className="pl2-table__head">
           <span>ID</span>

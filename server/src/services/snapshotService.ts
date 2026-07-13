@@ -175,6 +175,7 @@ export async function buildSnapshot(
       state: m.state,
       openCount: m.openIssues,
       closedCount: m.closedIssues,
+      description: m.description,
     })),
     items,
     displayOrder: [], // preenchido por loadSnapshotForRepository (persistido no tenant)
