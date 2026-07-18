@@ -41,6 +41,7 @@ import { logger } from '../lib/logger.ts';
 import { HttpError } from '../lib/errors.ts';
 import { normalizeStage } from '../lib/status.ts';
 import { invalidateSnapshot } from '../lib/snapshotCache.ts';
+import { loadSnapshotForRepository } from './snapshotService.ts';
 import {
   adaptEpic,
   adaptFeature,
@@ -506,6 +507,65 @@ export async function deleteWorkItemForRepository(
   const config = await configForRepository(await getRepositoryOr404(tenantId, id));
   await updateIssueState(config, number, 'closed');
   invalidateSnapshot(tenantId, id);
+}
+
+// Arquiva (fecha) um work item e TODOS os seus descendentes (Backlog do PM).
+// Usado para arquivar uma Initiative/Epic/Feature junto com filhos. Fecha só os
+// itens ainda abertos; devolve quantos foram arquivados. Fecha sequencialmente
+// para respeitar o rate limit de mutações do GitHub.
+export async function archiveWorkItemSubtreeForRepository(
+  tenantId: string,
+  id: string,
+  rootNumber: number,
+): Promise<{ archived: number }> {
+  const config = await configForRepository(await getRepositoryOr404(tenantId, id));
+  const snapshot = await loadSnapshotForRepository(tenantId, id);
+
+  const childrenByParent = new Map<number, number[]>();
+  for (const item of snapshot.items) {
+    if (item.parentNumber != null) {
+      const bucket = childrenByParent.get(item.parentNumber);
+      if (bucket) bucket.push(item.number);
+      else childrenByParent.set(item.parentNumber, [item.number]);
+    }
+  }
+  const byNumber = new Map(snapshot.items.map((i) => [i.number, i]));
+
+  // BFS pela subárvore a partir da raiz.
+  const subtree: number[] = [];
+  const seen = new Set<number>();
+  const stack = [rootNumber];
+  while (stack.length) {
+    const n = stack.pop() as number;
+    if (seen.has(n)) continue;
+    seen.add(n);
+    subtree.push(n);
+    for (const child of childrenByParent.get(n) ?? []) stack.push(child);
+  }
+
+  // Fecha só o que está aberto (a raiz pode não estar no snapshot → fecha mesmo assim).
+  const toClose = subtree.filter((n) => {
+    const item = byNumber.get(n);
+    return !item || item.state === 'open';
+  });
+
+  // Fecha em paralelo com concorrência limitada — sequencial estoura o teto de
+  // ~29 s do API Gateway em subárvores grandes; concorrência baixa evita os
+  // secondary rate limits do GitHub para mutações.
+  const CONCURRENCY = 5;
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < toClose.length) {
+      const n = toClose[cursor++];
+      await updateIssueState(config, n, 'closed');
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, toClose.length) }, () => worker()),
+  );
+
+  invalidateSnapshot(tenantId, id);
+  return { archived: toClose.length };
 }
 
 // Move a etapa canônica de um work item no board (Start Story, aprovar/devolver
