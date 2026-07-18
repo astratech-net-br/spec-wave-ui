@@ -141,6 +141,72 @@ export function featureOf(
   return parent && typeSlug(parent) === 'feature' ? parent : parent;
 }
 
+// ---- matriz item × etapa (Progress do TL e do Developer) ----
+
+export const EXEC_STAGES: StageName[] = ['Ready', 'Development', 'Code Review', 'QA', 'UAT', 'Done'];
+export const STAGE_SHORT: Record<string, string> = {
+  Ready: 'Ready',
+  Development: 'Dev',
+  'Code Review': 'Review',
+  QA: 'QA',
+  UAT: 'Homolog.',
+  Done: 'Done',
+};
+
+// Etapa efetiva na matriz: issue fechada conta como Done.
+export function stageOfExec(item: SnapshotItem): StageName | null {
+  if (item.state === 'closed') return 'Done';
+  return item.stage != null && EXEC_STAGES.includes(item.stage) ? item.stage : null;
+}
+
+export function ProgressMatrix({
+  items,
+  onItem,
+}: {
+  items: SnapshotItem[];
+  onItem: (item: SnapshotItem) => void;
+}) {
+  return (
+    <div className="px-matrix">
+      <div className="px-matrix__head">
+        <span />
+        {EXEC_STAGES.map((s) => (
+          <span key={s} className="px-matrix__col">
+            {STAGE_SHORT[s]}
+          </span>
+        ))}
+      </div>
+      {items.map((item) => {
+        const st = stageOfExec(item);
+        return (
+          <div key={item.number} className="px-matrix__row">
+            <button
+              type="button"
+              className="px-matrix__item"
+              onClick={() => onItem(item)}
+              title={item.title}
+            >
+              <TypeBadgeExec item={item} />
+              <span className="mono">#{item.number}</span>
+              <span className="px-matrix__title">{item.title}</span>
+            </button>
+            {EXEC_STAGES.map((s) => (
+              <span
+                key={s}
+                className={`px-matrix__cell${st === s ? ' px-matrix__cell--on' : ''}${
+                  st === s && s === 'Done' ? ' px-matrix__cell--done' : ''
+                }`}
+              >
+                {st === s ? '●' : ''}
+              </span>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ---- grupos com colapso (wrapper de layout) ----
 
 export function ExecGroups({

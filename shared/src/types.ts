@@ -26,6 +26,7 @@ export interface Repository {
   url: string;
   createdAt: string; // ISO 8601
   projectUrl?: string | null; // Projects v2 vinculado (para mover etapas); null = não configurado
+  wipThreshold?: number | null; // WIP pessoal persuasivo do workspace Dev; null = default (2)
 }
 
 // Criação de um repositório conectado. POST /api/repositories.
@@ -41,6 +42,7 @@ export interface CreateRepositoryRequest {
 export interface UpdateRepositoryRequest {
   url?: string;
   projectUrl?: string;
+  wipThreshold?: number | null; // limiar do WIP persuasivo do dev (null = volta ao default 2)
 }
 
 // Criação de uma Feature sob um Épico. POST /api/repositories/:id/workitems/epic/:number/features.

@@ -4,37 +4,24 @@
 // (sob demanda, cacheado por snapshot) absorve os insights aritméticos.
 
 import { useMemo, useRef, useState } from 'react';
-import type { SnapshotItem, StageName } from '@spec-flow/shared';
+import type { SnapshotItem } from '@spec-flow/shared';
 import type { WorkspacePageProps } from '../types';
 import { FeatureDrawer } from '../FeatureDrawer';
 import { ToastStack, useToasts } from '../Toasts';
 import { fetchProgressSummary } from '../../../data/workspace';
 import {
-  TypeBadgeExec,
+  EXEC_STAGES,
+  ProgressMatrix,
+  STAGE_SHORT,
   groupByMilestoneEta,
   isExecItem,
+  stageOfExec,
   useGroupCollapse,
 } from './executionShared';
 
-const EXEC_STAGES: StageName[] = ['Ready', 'Development', 'Code Review', 'QA', 'UAT', 'Done'];
-const STAGE_SHORT: Record<string, string> = {
-  Ready: 'Ready',
-  Development: 'Dev',
-  'Code Review': 'Review',
-  QA: 'QA',
-  UAT: 'Homolog.',
-  Done: 'Done',
-};
-
-// Etapa efetiva na matriz: issue fechada conta como Done.
-function stageOf(item: SnapshotItem): StageName | null {
-  if (item.state === 'closed') return 'Done';
-  return item.stage != null && EXEC_STAGES.includes(item.stage) ? item.stage : null;
-}
-
 export function TechProgressPage({ repoId, snapshot }: WorkspacePageProps) {
   const items = useMemo(
-    () => snapshot.items.filter((i) => isExecItem(i) && stageOf(i) != null),
+    () => snapshot.items.filter((i) => isExecItem(i) && stageOfExec(i) != null),
     [snapshot.items],
   );
   const { collapsed, toggle } = useGroupCollapse(repoId, 'progress');
@@ -84,11 +71,11 @@ export function TechProgressPage({ repoId, snapshot }: WorkspacePageProps) {
       ) : (
         groups.map((g) => {
           const counts = EXEC_STAGES.map(
-            (s) => g.items.filter((i) => stageOf(i) === s).length,
+            (s) => g.items.filter((i) => stageOfExec(i) === s).length,
           );
           const totalPts = g.items.reduce((sum, i) => sum + (i.points ?? 0), 0);
           const donePts = g.items
-            .filter((i) => stageOf(i) === 'Done')
+            .filter((i) => stageOfExec(i) === 'Done')
             .reduce((sum, i) => sum + (i.points ?? 0), 0);
           const milestoneNumber = g.key === 'none' ? null : Number(g.key.slice(1));
           const summary = summaries.get(g.key);
@@ -135,43 +122,7 @@ export function TechProgressPage({ repoId, snapshot }: WorkspacePageProps) {
                     </div>
                   )}
 
-                  <div className="px-matrix">
-                    <div className="px-matrix__head">
-                      <span />
-                      {EXEC_STAGES.map((s) => (
-                        <span key={s} className="px-matrix__col">
-                          {STAGE_SHORT[s]}
-                        </span>
-                      ))}
-                    </div>
-                    {g.items.map((item) => {
-                      const st = stageOf(item);
-                      return (
-                        <div key={item.number} className="px-matrix__row">
-                          <button
-                            type="button"
-                            className="px-matrix__item"
-                            onClick={() => setDrawer(item)}
-                            title={item.title}
-                          >
-                            <TypeBadgeExec item={item} />
-                            <span className="mono">#{item.number}</span>
-                            <span className="px-matrix__title">{item.title}</span>
-                          </button>
-                          {EXEC_STAGES.map((s) => (
-                            <span
-                              key={s}
-                              className={`px-matrix__cell${st === s ? ' px-matrix__cell--on' : ''}${
-                                st === s && s === 'Done' ? ' px-matrix__cell--done' : ''
-                              }`}
-                            >
-                              {st === s ? '●' : ''}
-                            </span>
-                          ))}
-                        </div>
-                      );
-                    })}
-                  </div>
+                  <ProgressMatrix items={g.items} onItem={setDrawer} />
                 </>
               )}
             </section>

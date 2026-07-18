@@ -36,6 +36,7 @@ import { TechCodeReviewPage } from './tech/CodeReviewPage';
 import { TechQaPage } from './tech/QaPage';
 import { UatPage } from './tech/UatPage';
 import { TechProgressPage } from './tech/ProgressPage';
+import { autoPickMilestone } from './dev/devShared';
 import { DevDashboard } from './dev/DevDashboard';
 import { PendingPage } from './dev/PendingPage';
 import { InProgressPage } from './dev/InProgressPage';
@@ -100,6 +101,18 @@ function WorkspaceShell({ role, page: rawPage, query }: WorkspaceLayoutProps) {
 
   const { state, retry, refresh } = useProjectSnapshot(validRepoId);
   const snapshot = state.phase === 'ready' ? state.snapshot : null;
+
+  // Auto-seleção do milestone corrente (papel dev): sem seleção válida, escolhe
+  // o Em execução de ETA mais próxima (senão o Planejada de início mais próximo).
+  useEffect(() => {
+    if (role !== 'dev' || !snapshot) return;
+    const openOk = snapshot.milestones.some(
+      (m) => m.state === 'open' && m.number === milestoneNumber,
+    );
+    if (openOk) return;
+    const pick = autoPickMilestone(snapshot.milestones);
+    if (pick != null && pick !== milestoneNumber) setMilestoneNumber(pick);
+  }, [role, snapshot, milestoneNumber, setMilestoneNumber]);
 
   const label = WORKSPACE_NAV[role].find((n) => n.page === page)?.label ?? page;
   const Page = PAGES[role][page];

@@ -148,6 +148,7 @@ export interface RepositoryRecord {
   projectNumber?: number | null;
   etapaFieldId?: string | null;
   stageOptions?: Record<string, string> | null;
+  wipThreshold?: number | null; // WIP pessoal persuasivo do workspace Dev (default 2)
 }
 
 const repoKey = (tenantId: string, repoId: string) => ({
@@ -696,6 +697,10 @@ export async function queryEstimateMeta(
 // Gravado por toda mutação de etapa que passa pelo backend; itens movidos por
 // fora da UI recebem um registro aproximado na reconciliação (approximate).
 
+// Origem de uma transição: ato humano na UI (manual) ou movimento aplicado pela
+// automação de eventos de PR (workspace Dev). Registros antigos não têm o campo.
+export type StageOrigin = 'manual' | 'automation';
+
 export interface StageEntryRecord {
   tenantId: string;
   repoId: string;
@@ -703,6 +708,7 @@ export interface StageEntryRecord {
   issueNumber: number;
   at: string; // ISO — momento da entrada na etapa
   approximate: boolean;
+  origin?: StageOrigin;
 }
 
 const stageEntryKey = (t: {
@@ -737,6 +743,48 @@ export async function queryStageEntries(
     }),
   );
   return (res.Items ?? []) as StageEntryRecord[];
+}
+
+// ---------- Última transição por item (automação do workspace Dev) ----------
+// Um registro por item com a transição MAIS RECENTE (etapa/quando/origem). A
+// automação de eventos de PR consulta isto para nunca desfazer um movimento
+// manual mais recente que a evidência de PR.
+
+export interface StageLastRecord {
+  tenantId: string;
+  repoId: string;
+  issueNumber: number;
+  stage: string; // StageName canônico da última transição
+  at: string; // ISO
+  origin: StageOrigin;
+}
+
+const stageLastKey = (t: { tenantId: string; repoId: string; issueNumber: number }) => ({
+  PK: `TENANT#${t.tenantId}`,
+  SK: `STAGELAST#${t.repoId}#${t.issueNumber}`,
+});
+
+export async function putStageLast(rec: StageLastRecord): Promise<void> {
+  await doc().send(
+    new PutCommand({ TableName: TABLE, Item: { ...stageLastKey(rec), ...rec } }),
+  );
+}
+
+export async function queryStageLast(
+  tenantId: string,
+  repoId: string,
+): Promise<StageLastRecord[]> {
+  const res = await doc().send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+      ExpressionAttributeValues: {
+        ':pk': `TENANT#${tenantId}`,
+        ':sk': `STAGELAST#${repoId}#`,
+      },
+    }),
+  );
+  return (res.Items ?? []) as StageLastRecord[];
 }
 
 // ---------- Triagem de comentários de revisão de spec (tela Specification) ----------
@@ -829,6 +877,38 @@ export async function listMembers(tenantId: string): Promise<MemberRecord[]> {
     }),
   );
   return (out.Items ?? []) as MemberRecord[];
+}
+
+// ---------- Preferências por usuário (workspace Dev) ----------
+// A sessão autentica um usuário Cognito (sub); o "eu" do workspace do Developer
+// é um login do GitHub. O vínculo é uma preferência por usuário do tenant.
+
+export interface UserPrefRecord {
+  tenantId: string;
+  sub: string;
+  githubLogin: string | null;
+  updatedAt: string; // ISO
+}
+
+const userPrefKey = (tenantId: string, sub: string) => ({
+  PK: `TENANT#${tenantId}`,
+  SK: `USERPREF#${sub}`,
+});
+
+export async function putUserPref(rec: UserPrefRecord): Promise<void> {
+  await doc().send(
+    new PutCommand({ TableName: TABLE, Item: { ...userPrefKey(rec.tenantId, rec.sub), ...rec } }),
+  );
+}
+
+export async function getUserPref(
+  tenantId: string,
+  sub: string,
+): Promise<UserPrefRecord | null> {
+  const out = await doc().send(
+    new GetCommand({ TableName: TABLE, Key: userPrefKey(tenantId, sub) }),
+  );
+  return (out.Item as UserPrefRecord | undefined) ?? null;
 }
 
 // ---------- Convites (fase 3) ----------

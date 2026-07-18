@@ -7,6 +7,8 @@ import type { ProjectSnapshot, Repository, SnapshotItem, WorkspaceRole } from '@
 import { hrefForItem, hrefForWorkspace } from '../../lib/router';
 import { isWorkspacePage, ROLE_LABELS } from '../../lib/workspaceNav';
 import { waitingReview, waitingSince } from '../../lib/workspaceSelectors';
+import { useMe } from '../../hooks/useMe';
+import { prWaitingMyReview } from './dev/devShared';
 
 interface WorkspaceTopbarProps {
   role: WorkspaceRole;
@@ -27,15 +29,25 @@ function searchHref(repoId: string, item: SnapshotItem): string {
     : item.url;
 }
 
-// Notificações derivadas: PRs esperando review + PRs com mudanças pedidas.
-function deriveNotifications(snapshot: ProjectSnapshot | null): { text: string; href: string }[] {
+// Notificações derivadas: PRs esperando MEU review (primeiro — é o que devo aos
+// outros), PRs com mudanças pedidas e PRs esperando review.
+function deriveNotifications(
+  snapshot: ProjectSnapshot | null,
+  myLogin: string | null,
+): { text: string; href: string }[] {
   if (!snapshot) return [];
+  const mine: { text: string; href: string }[] = [];
   const notes: { text: string; href: string }[] = [];
   for (const item of snapshot.items) {
     if (item.state !== 'open') continue;
     for (const pr of item.prs) {
       if (pr.state !== 'open') continue;
-      if (pr.reviewDecision === 'CHANGES_REQUESTED') {
+      if (myLogin && prWaitingMyReview(pr, myLogin)) {
+        mine.push({
+          text: `PR #${pr.number} esperando o SEU review — ${item.title}`,
+          href: pr.url,
+        });
+      } else if (pr.reviewDecision === 'CHANGES_REQUESTED') {
         notes.push({ text: `PR #${pr.number} com mudanças pedidas — ${item.title}`, href: pr.url });
       } else if (!pr.isDraft && pr.reviewDecision !== 'APPROVED' && waitingReview(item)) {
         notes.push({
@@ -45,7 +57,7 @@ function deriveNotifications(snapshot: ProjectSnapshot | null): { text: string; 
       }
     }
   }
-  return notes.slice(0, 12);
+  return [...mine, ...notes].slice(0, 12);
 }
 
 export function WorkspaceTopbar({
@@ -62,6 +74,7 @@ export function WorkspaceTopbar({
 }: WorkspaceTopbarProps) {
   const [query, setQuery] = useState('');
   const [showNotes, setShowNotes] = useState(false);
+  const { me } = useMe();
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -76,7 +89,10 @@ export function WorkspaceTopbar({
       .slice(0, 8);
   }, [query, snapshot, repoId]);
 
-  const notifications = useMemo(() => deriveNotifications(snapshot), [snapshot]);
+  const notifications = useMemo(
+    () => deriveNotifications(snapshot, me?.login ?? null),
+    [snapshot, me],
+  );
   const openMilestones = snapshot?.milestones.filter((m) => m.state === 'open') ?? [];
 
   return (
@@ -99,10 +115,10 @@ export function WorkspaceTopbar({
         <select
           className="ws-topbar__milestone"
           value={milestoneNumber ?? ''}
-          onChange={(e) => onMilestoneChange(e.target.value ? Number(e.target.value) : null)}
+          onChange={(e) => e.target.value && onMilestoneChange(Number(e.target.value))}
           aria-label="Milestone corrente"
         >
-          <option value="">Todos os milestones</option>
+          {milestoneNumber == null && <option value="">Selecione um milestone…</option>}
           {openMilestones.map((m) => (
             <option key={m.number} value={m.number}>
               {m.title}
