@@ -9,8 +9,11 @@ import {
   generateProgressSummary,
   qaApproveForRepository,
   qaReturnForRepository,
+  qaReturnInfoForRepository,
   returnToReadyForRepository,
   setStoryPointsForRepository,
+  setTaskStateForRepository,
+  startWorkForRepository,
 } from '../services/executionService.ts';
 
 function paramsOr400(req: Request, res: Response): { repoId: string; n: number } | null {
@@ -47,6 +50,46 @@ export async function patchWorkItemPoints(req: Request, res: Response, next: Nex
   try {
     await setStoryPointsForRepository(tenantOf(req).tenantId, p.repoId, p.n, points);
     res.status(204).end();
+  } catch (err) {
+    handle(res, next, err);
+  }
+}
+
+// POST .../workitems/:level/:number/start — pull do dev (assignee + Development)
+export async function postStartWork(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const p = paramsOr400(req, res);
+  if (!p) return;
+  const tenant = tenantOf(req);
+  try {
+    res.json(await startWorkForRepository(tenant.tenantId, tenant.sub, p.repoId, p.n));
+  } catch (err) {
+    handle(res, next, err);
+  }
+}
+
+// PATCH .../workitems/:level/:number/state — { done } (Task checável)
+export async function patchTaskState(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const p = paramsOr400(req, res);
+  if (!p) return;
+  const done = ((req.body ?? {}) as Record<string, unknown>).done;
+  if (typeof done !== 'boolean') {
+    res.status(400).json({ error: 'done deve ser um booleano.' });
+    return;
+  }
+  try {
+    await setTaskStateForRepository(tenantOf(req).tenantId, p.repoId, p.n, done);
+    res.status(204).end();
+  } catch (err) {
+    handle(res, next, err);
+  }
+}
+
+// GET .../workitems/:level/:number/qa-return-info → { reason, at } | null
+export async function getQaReturnInfo(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const p = paramsOr400(req, res);
+  if (!p) return;
+  try {
+    res.json(await qaReturnInfoForRepository(tenantOf(req).tenantId, p.repoId, p.n));
   } catch (err) {
     handle(res, next, err);
   }

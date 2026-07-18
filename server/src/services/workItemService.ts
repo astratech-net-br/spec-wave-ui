@@ -45,7 +45,12 @@ import { HttpError } from '../lib/errors.ts';
 import { normalizeStage } from '../lib/status.ts';
 import { invalidateSnapshot } from '../lib/snapshotCache.ts';
 import { loadSnapshotForRepository } from './snapshotService.ts';
-import { putStageEntry, queryStageEntries } from '../db/dynamo.ts';
+import {
+  putStageEntry,
+  putStageLast,
+  queryStageEntries,
+  type StageOrigin,
+} from '../db/dynamo.ts';
 import {
   adaptEpic,
   adaptFeature,
@@ -711,6 +716,7 @@ export async function setStageForRepository(
   id: string,
   number: number,
   stage: StageName,
+  origin: StageOrigin = 'manual',
 ): Promise<void> {
   const record = await getRepositoryOr404(tenantId, id);
   const config = await configForRepository(record);
@@ -741,16 +747,20 @@ export async function setStageForRepository(
 
   await moveProjectStage(config, project.projectId, itemId, project.etapaFieldId, option[1]);
 
-  // Registra a ENTRADA na etapa (tempo-na-etapa das telas do PM). Best-effort.
+  // Registra a ENTRADA na etapa (tempo-na-etapa das telas do PM) e a ÚLTIMA
+  // transição do item (supressão da automação do workspace Dev). Best-effort.
+  const at = new Date().toISOString();
   try {
     await putStageEntry({
       tenantId,
       repoId: id,
       stage,
       issueNumber: number,
-      at: new Date().toISOString(),
+      at,
       approximate: false,
+      origin,
     });
+    await putStageLast({ tenantId, repoId: id, issueNumber: number, stage, at, origin });
   } catch (err) {
     logger.warn(`Issue #${number}: etapa movida, mas falhou o registro de transição: ${(err as Error).message}`);
   }

@@ -51,6 +51,7 @@ export function toRepositoryDTO(record: RepositoryRecord): Repository {
     url: record.url,
     createdAt: record.createdAt,
     projectUrl: record.projectUrl ?? null,
+    wipThreshold: record.wipThreshold ?? null,
   };
 }
 
@@ -178,7 +179,7 @@ export async function createRepository(
 export async function updateRepository(
   tenantId: string,
   id: string,
-  input: { url?: string; projectUrl?: string },
+  input: { url?: string; projectUrl?: string; wipThreshold?: number | null },
 ): Promise<Repository> {
   const record = await getRepositoryOr404(tenantId, id);
   const previousUrl = record.url;
@@ -216,6 +217,16 @@ export async function updateRepository(
       );
       Object.assign(updated, projectFields(projectUrl, project));
     }
+  }
+
+  if (input.wipThreshold !== undefined) {
+    if (
+      input.wipThreshold !== null &&
+      (!Number.isInteger(input.wipThreshold) || input.wipThreshold < 1)
+    ) {
+      throw new HttpError(400, 'wipThreshold deve ser um inteiro ≥ 1 (ou null para o default).');
+    }
+    updated.wipThreshold = input.wipThreshold;
   }
 
   await replaceRepositoryRecord(updated, previousUrl);

@@ -64,11 +64,14 @@ import {
   postReviewDraft,
 } from '../controllers/TechReviewController.ts';
 import {
+  getQaReturnInfo,
+  patchTaskState,
   patchWorkItemPoints,
   postProgressSummary,
   postQaApprove,
   postQaReturn,
   postReturnToReady,
+  postStartWork,
 } from '../controllers/ExecutionController.ts';
 import { getRepositorySnapshot } from '../controllers/SnapshotController.ts';
 import { postRepositoryInsight } from '../controllers/InsightsController.ts';
@@ -193,6 +196,20 @@ repositoryRoutes.post('/repositories/:id/workitems/:level/:number/qa-approve', (
 repositoryRoutes.post('/repositories/:id/workitems/:level/:number/qa-return', (req, res, next) => {
   postQaReturn(req, res, next).catch(next);
 });
+
+// Workspace do Developer: pull (start), Tasks checáveis e retorno de QA.
+repositoryRoutes.post('/repositories/:id/workitems/:level/:number/start', (req, res, next) => {
+  postStartWork(req, res, next).catch(next);
+});
+repositoryRoutes.patch('/repositories/:id/workitems/:level/:number/state', (req, res, next) => {
+  patchTaskState(req, res, next).catch(next);
+});
+repositoryRoutes.get(
+  '/repositories/:id/workitems/:level/:number/qa-return-info',
+  (req, res, next) => {
+    getQaReturnInfo(req, res, next).catch(next);
+  },
+);
 repositoryRoutes.post(
   '/repositories/:id/milestones/:milestoneNumber/progress-summary',
   (req, res, next) => {

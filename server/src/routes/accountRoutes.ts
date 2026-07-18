@@ -11,6 +11,7 @@ import {
   hasTenantOpenrouterKey,
   setTenantOpenrouterKey,
 } from '../services/settingsService.ts';
+import { getUserPref, putUserPref } from '../db/dynamo.ts';
 
 export const accountRoutes = Router();
 
@@ -21,6 +22,44 @@ function handleError(err: unknown, res: Response, next: NextFunction): void {
   }
   next(err);
 }
+
+// ---------- Identidade (workspace do Developer) ----------
+// A sessão autentica um usuário Cognito; o "eu" das views do dev é um login do
+// GitHub, vinculado uma vez por usuário (persistido no tenant). O acesso ao
+// GitHub é via installation token do App (não há OAuth de usuário), então o
+// login não é descoberto automaticamente — o dev escolhe o seu na primeira vez.
+
+// GET /api/me → { login, email }
+accountRoutes.get('/me', (req: Request, res: Response, next: NextFunction) => {
+  const tenant = tenantOf(req);
+  getUserPref(tenant.tenantId, tenant.sub)
+    .then((pref) => res.json({ login: pref?.githubLogin ?? null, email: tenant.email ?? null }))
+    .catch((err) => handleError(err, res, next));
+});
+
+// PUT /api/me { login } → grava o login do GitHub do usuário ('' ou null limpa).
+accountRoutes.put('/me', (req: Request, res: Response, next: NextFunction) => {
+  const tenant = tenantOf(req);
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const raw = body.login;
+  if (raw !== null && typeof raw !== 'string') {
+    res.status(400).json({ error: 'login deve ser um texto (vazio para limpar).' });
+    return;
+  }
+  const login = typeof raw === 'string' ? raw.trim() : '';
+  if (login && !/^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$/.test(login)) {
+    res.status(400).json({ error: `Login do GitHub inválido: "${login}".` });
+    return;
+  }
+  putUserPref({
+    tenantId: tenant.tenantId,
+    sub: tenant.sub,
+    githubLogin: login || null,
+    updatedAt: new Date().toISOString(),
+  })
+    .then(() => res.json({ login: login || null }))
+    .catch((err) => handleError(err, res, next));
+});
 
 // ---------- Billing ----------
 

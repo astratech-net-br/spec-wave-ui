@@ -5,6 +5,7 @@
 import {
   createComment,
   createIssue,
+  fetchIssueCommentsFull,
   fetchIssueRef,
   fetchProjectItemId,
   fetchSingleSelectField,
@@ -12,8 +13,10 @@ import {
   setIssueAssignees,
   setIssueMilestone,
   setSubIssueParent,
+  updateIssueState,
   type GitHubConfig,
 } from '../github/client.ts';
+import { getUserPref, queryStageEntries } from '../db/dynamo.ts';
 import { generateText } from '../llm/openrouter.ts';
 import { HttpError } from '../lib/errors.ts';
 import { invalidateSnapshot } from '../lib/snapshotCache.ts';
@@ -56,6 +59,82 @@ export async function setStoryPointsForRepository(
   if (!optionId) throw new HttpError(422, `O campo Story Points não tem a opção "${target}".`);
   await moveProjectStage(config, config.project.projectId, itemId, field.id, optionId);
   invalidateSnapshot(tenantId, repoId);
+}
+
+// ---- Start Story (Pending do Developer) ----
+// Pull: atribui o usuário da sessão (login do GitHub vinculado em /api/me) como
+// responsável e move a etapa para Desenvolvimento (transição manual).
+export async function startWorkForRepository(
+  tenantId: string,
+  sub: string,
+  repoId: string,
+  number: number,
+): Promise<{ login: string }> {
+  const pref = await getUserPref(tenantId, sub);
+  const login = pref?.githubLogin ?? null;
+  if (!login) {
+    throw new HttpError(
+      409,
+      'Defina o seu login do GitHub no workspace do Developer antes de puxar um item.',
+    );
+  }
+  const config = await configFor(tenantId, repoId);
+  await setIssueAssignees(config, number, [login]);
+  await setStageForRepository(tenantId, repoId, number, 'Development', 'manual');
+  invalidateSnapshot(tenantId, repoId);
+  return { login };
+}
+
+// ---- Tasks checáveis (In Progress do Developer) ----
+// Marcar fecha a issue da Task; desmarcar reabre. O progresso {k}/{t} sobe em
+// cascata via subIssuesSummary do GitHub (nada a persistir aqui).
+export async function setTaskStateForRepository(
+  tenantId: string,
+  repoId: string,
+  number: number,
+  done: boolean,
+): Promise<void> {
+  const config = await configFor(tenantId, repoId);
+  const ref = await fetchIssueRef(config, number);
+  if (!/^\s*\[TASK\]/.test(ref.title)) {
+    throw new HttpError(422, `A issue #${number} não é uma Task.`);
+  }
+  await updateIssueState(config, number, done ? 'closed' : 'open');
+  invalidateSnapshot(tenantId, repoId);
+}
+
+// ---- Retorno de QA (badge no card do In Progress) ----
+// O motivo vive no último comentário com o marcador qa-return. O badge vale
+// para o ciclo atual de Desenvolvimento: comentário anterior à entrada corrente
+// na etapa (com tolerância — o comentário é postado ANTES do movimento) é ciclo
+// antigo e não conta.
+const QA_RETURN_TOLERANCE_MS = 10 * 60_000;
+
+export async function qaReturnInfoForRepository(
+  tenantId: string,
+  repoId: string,
+  number: number,
+): Promise<{ reason: string; at: string } | null> {
+  const config = await configFor(tenantId, repoId);
+  const comments = await fetchIssueCommentsFull(config, number);
+  const returns = comments.filter((c) => c.body.includes(QA_RETURN_MARKER));
+  const last = returns[returns.length - 1];
+  if (!last) return null;
+
+  const entries = await queryStageEntries(tenantId, repoId, 'Development').catch(() => []);
+  const entry = entries.find((e) => e.issueNumber === number);
+  if (
+    entry &&
+    Date.parse(last.createdAt) < Date.parse(entry.at) - QA_RETURN_TOLERANCE_MS
+  ) {
+    return null; // retorno de um ciclo anterior — o item já saiu e voltou depois
+  }
+
+  const reason = last.body
+    .replace(QA_RETURN_MARKER, '')
+    .replace(/\*\*Retorno de QA:\*\*/, '')
+    .trim();
+  return { reason, at: last.createdAt };
 }
 
 // ---- Devolver para Ready (Development) ----

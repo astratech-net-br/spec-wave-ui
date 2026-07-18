@@ -404,6 +404,67 @@ export async function fetchProgressSummary(
   return (json as { content: string }).content;
 }
 
+// ---- Workspace do Developer ----
+
+// Identidade GitHub da sessão (GET/PUT /api/me). O backend guarda o vínculo
+// usuário Cognito → login do GitHub (não há OAuth de usuário no GitHub App).
+export interface Me {
+  login: string | null;
+  email: string | null;
+}
+
+export async function fetchMe(): Promise<Me> {
+  return (await request('/api/me', { method: 'GET' })) as Me;
+}
+
+export async function saveMyLogin(login: string | null): Promise<string | null> {
+  const json = await request('/api/me', { method: 'PUT', payload: { login } });
+  return (json as { login: string | null }).login;
+}
+
+// Start Story (Pending): assignee = usuário da sessão + etapa Development.
+export async function startWork(
+  repoId: string,
+  level: string,
+  number: number,
+): Promise<{ login: string }> {
+  const json = await request(`${itemBase(repoId, level, number)}/start`, {
+    method: 'POST',
+    timeoutMs: 30_000,
+  });
+  return json as { login: string };
+}
+
+// Task checável (In Progress): marcar fecha a issue da Task; desmarcar reabre.
+export async function setTaskState(
+  repoId: string,
+  number: number,
+  done: boolean,
+): Promise<void> {
+  await request(`${itemBase(repoId, 'task', number)}/state`, {
+    method: 'PATCH',
+    payload: { done },
+    timeoutMs: 30_000,
+  });
+}
+
+// Retorno de QA do ciclo corrente de Desenvolvimento (badge do card).
+export interface QaReturnInfo {
+  reason: string;
+  at: string;
+}
+
+export async function fetchQaReturnInfo(
+  repoId: string,
+  number: number,
+): Promise<QaReturnInfo | null> {
+  const json = await request(`${itemBase(repoId, 'story', number)}/qa-return-info`, {
+    method: 'GET',
+    timeoutMs: 30_000,
+  });
+  return json as QaReturnInfo | null;
+}
+
 // ---- Plan view do TL (plan.md + decomposição) ----
 
 export async function fetchPlanMeta(repoId: string, n: number): Promise<SpecMeta> {

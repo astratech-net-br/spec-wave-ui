@@ -3182,3 +3182,153 @@ input.tl-task__title {
 .px-matrix__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .px-matrix__cell { text-align: center; color: var(--accent); font-size: 11px; }
 .px-matrix__cell--done { color: var(--done); }
+
+/* ===== Workspace do Developer (spec "Workspace do Developer") ===== */
+
+/* Dashboard — cards navegáveis (trampolim) */
+.dv-card {
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.dv-card:hover { border-color: var(--accent-border); transform: translateY(-1px); }
+.dv-card--warn .widget__value { color: var(--warning); }
+
+/* Identidade (vínculo do login do GitHub) */
+.dv-identity__form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.dv-identity__input {
+  background: var(--well);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.dv-identity__error { color: var(--danger); font-size: 12.5px; margin-top: 8px; }
+
+/* Toggle "ver todas do time" */
+.dv-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Pending — próximo recomendado */
+.dv-row--next { border-color: var(--accent-border); background: var(--accent-soft); }
+.dv-next-chip {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent-light);
+  border: 1px solid var(--accent-border);
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+.dv-pending .ex-row {
+  grid-template-columns: 70px auto minmax(200px, 1fr) minmax(120px, 220px) 64px minmax(90px, 140px) 56px auto;
+}
+
+/* In Progress — cards de trabalho */
+.dv-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 12px;
+}
+.dv-card-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  min-width: 0;
+}
+.dv-card-item__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.dv-card-item__head .ex-row__title { flex: 1; }
+.dv-card-item__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+}
+.dv-card-item__tasksum { color: var(--text-2); }
+.dv-card-item__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  flex-wrap: wrap;
+}
+.dv-qa-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  border-radius: 999px;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dv-qa-reason {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 7%, transparent);
+  padding: 8px 10px;
+  white-space: pre-wrap;
+}
+.dv-tasklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dv-task {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+  min-width: 0;
+}
+.dv-task input { accent-color: var(--accent); }
+.dv-task .mono { color: var(--text-muted); font-size: 11.5px; }
+.dv-task--done { color: var(--text-muted); text-decoration: line-through; }
+
+/* Code Review — filas */
+.dv-queue__head { cursor: default; }
+.dv-queue--urgent { border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
+.dv-queue--urgent .ex-group__title { color: var(--warning); }
+.dv-queue__empty {
+  padding: 10px 14px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}

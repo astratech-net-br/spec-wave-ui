@@ -85,7 +85,7 @@ export async function patchRepository(
   }
 
   const body = (req.body ?? {}) as Record<string, unknown>;
-  const input: { url?: string; projectUrl?: string } = {};
+  const input: { url?: string; projectUrl?: string; wipThreshold?: number | null } = {};
   if ('url' in body) {
     if (typeof body.url !== 'string' || body.url.trim().length === 0) {
       res.status(400).json({ error: 'A URL do repositório não pode ser vazia.' });
@@ -100,8 +100,15 @@ export async function patchRepository(
     }
     input.projectUrl = body.projectUrl;
   }
-  if (input.url === undefined && input.projectUrl === undefined) {
-    res.status(400).json({ error: 'Nada para atualizar: informe url e/ou projectUrl.' });
+  if ('wipThreshold' in body) {
+    if (body.wipThreshold !== null && typeof body.wipThreshold !== 'number') {
+      res.status(400).json({ error: 'wipThreshold deve ser um número (ou null para o default).' });
+      return;
+    }
+    input.wipThreshold = body.wipThreshold as number | null;
+  }
+  if (input.url === undefined && input.projectUrl === undefined && input.wipThreshold === undefined) {
+    res.status(400).json({ error: 'Nada para atualizar: informe url, projectUrl e/ou wipThreshold.' });
     return;
   }
 
