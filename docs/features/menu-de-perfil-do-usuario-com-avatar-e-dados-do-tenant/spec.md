@@ -1,116 +1,109 @@
 # Visão Geral
-- **Objetivo**: Fornecer um ponto de acesso centralizado no cabeçalho para o usuário visualizar suas informações de perfil, dados do tenant ativo e realizar logout de forma intuitiva.
-- **Personas**: Usuário autenticado em ambiente multi-tenant que precisa identificar rapidamente em qual tenant está operando e acessar funcionalidades de conta.
+- **Objetivo**: Implementar um menu de perfil no cabeçalho da aplicação que exiba informações do usuário logado e do tenant ativo, proporcionando acesso rápido à identidade da sessão e opção de logout.
+- **Personas**: Usuário autenticado em contexto multi-tenant.
 - **Critérios de Sucesso**: 
-  - 100% dos usuários autenticados visualizam o menu de perfil no cabeçalho
-  - Redução em 50% do tempo para identificação do tenant ativo
-  - 0 incidentes de logout mal-sucedido após implementação
+  - Menu de perfil visível e funcional após login
+  - Exibição correta do avatar ou iniciais do usuário
+  - Apresentação precisa dos dados do tenant ativo
+  - Funcionamento consistente do logout
 
 # Regras de Negócio
 - RN001: O menu de perfil só deve ser exibido para usuários autenticados
-- RN002: Quando o usuário possui avatar cadastrado, este deve ser exibido no ícone do menu
-- RN003: Na ausência de avatar, devem ser exibidas as iniciais do nome do usuário (primeira letra do primeiro nome + primeira letra do último nome)
-- RN004: O dropdown deve conter obrigatoriamente: nome completo do usuário, tenant-id, tenant-name e opção de logout
+- RN002: Quando o usuário possuir foto de perfil cadastrada, esta deve ser exibida como avatar
+- RN003: Na ausência de foto, devem ser exibidas as iniciais do nome do usuário (primeira letra do primeiro nome + primeira letra do último nome)
+- RN004: O dropdown deve conter obrigatoriamente: nome do usuário, tenant-id, tenant-name e opção de logout
 - RN005: O tenant exibido deve ser sempre o tenant ativo na sessão atual
 - RN006: Ao clicar em logout, a sessão deve ser encerrada e o usuário redirecionado para a tela de login
 
 # Fluxos
 ## Fluxo Principal (Happy Path)
-1. Usuário faz login com sucesso no sistema
-2. Sistema carrega o cabeçalho da aplicação com o menu de perfil
-3. Avatar do usuário é exibido no ícone do menu (quando disponível)
-4. Usuário clica no ícone do menu
-5. Dropdown abre mostrando: nome do usuário, tenant-id, tenant-name e botão de logout
-6. Usuário visualiza as informações e fecha o dropdown clicando fora ou no ícone novamente
+1. Usuário faz login com sucesso
+2. Sistema carrega dados do usuário e tenant ativo
+3. Menu de perfil é renderizado no cabeçalho com avatar do usuário
+4. Usuário clica no avatar/iniciais
+5. Dropdown abre exibindo: nome do usuário, tenant-id, tenant-name e opção logout
+6. Usuário clica em "Logout"
+7. Sessão é encerrada
+8. Usuário é redirecionado para tela de login
 
 ## Fluxos Alternativos
-- **FA001 - Usuário sem avatar**: 
-  1. Sistema detecta que usuário não possui avatar cadastrado
-  2. Exibe iniciais do nome em um círculo colorido no lugar do avatar
+- **FA001 - Usuário sem foto**: 
+  1. Sistema detecta ausência de foto no perfil
+  2. Exibe iniciais do nome em formato de avatar padrão
   3. Restante do fluxo igual ao principal
 
-- **FA002 - Logout bem-sucedido**:
-  1. Usuário clica no botão de logout no dropdown
-  2. Sistema encerra a sessão
-  3. Redireciona para tela de login
-  4. Exibe mensagem de logout bem-sucedido
+- **FA002 - Fechamento do dropdown**:
+  1. Usuário clica fora do dropdown ou no avatar novamente
+  2. Dropdown é fechado sem executar ações
 
 ## Cenários de Erro
-- **CE001 - Falha ao carregar avatar**:
-  1. Sistema tenta carregar avatar mas encontra erro (imagem corrompida ou URL inválida)
-  2. Fallback para exibição das iniciais do nome
-  3. Registra erro em logs para debugging
+- **CE001 - Dados do usuário indisponíveis**:
+  1. Sistema não consegue carregar dados do usuário
+  2. Exibe placeholder genérico e desabilita funcionalidades do menu
 
-- **CE002 - Dados de tenant indisponíveis**:
-  1. Sistema não consegue recuperar informações do tenant ativo
-  2. Exibe placeholder "[Dados não disponíveis]" no lugar do tenant-id e tenant-name
-  3. Mantém funcionalidade de logout disponível
+- **CE002 - Dados do tenant indisponíveis**:
+  1. Sistema não consegue carregar dados do tenant ativo
+  2. Exibe mensagem "Tenant não identificado" no dropdown
 
 # Critérios de Aceite
 ```gherkin
-Cenário: Exibição do menu de perfil para usuário autenticado com avatar
+Cenário: Exibição do menu de perfil para usuário autenticado com foto
   Dado que o usuário está autenticado no sistema
-  E possui um avatar cadastrado
-  Quando o sistema carrega o cabeçalho da aplicação
-  Então o avatar do usuário deve ser exibido no ícone do menu de perfil
+  E possui foto de perfil cadastrada
+  Quando a página é carregada
+  Então o avatar do usuário deve ser exibido no cabeçalho
 
-Cenário: Fallback para iniciais quando avatar não está disponível
+Cenário: Exibição de iniciais quando usuário não tem foto
   Dado que o usuário está autenticado no sistema
-  E não possui avatar cadastrado
-  Quando o sistema carrega o cabeçalho da aplicação
-  Então as iniciais do nome do usuário devem ser exibidas no ícone do menu
+  E não possui foto de perfil cadastrada
+  Quando a página é carregada
+  Então as iniciais do nome do usuário devem ser exibidas no cabeçalho
 
-Cenário: Abertura do dropdown com informações completas
+Cenário: Abertura do dropdown com informações do usuário e tenant
   Dado que o usuário está autenticado no sistema
-  Quando clica no ícone do menu de perfil
-  Então o dropdown deve abrir mostrando:
-    | Campo        | Valor esperado           |
+  Quando clica no avatar/iniciais no cabeçalho
+  Então o dropdown deve abrir exibindo:
+    | Campo        | Valor esperado          |
     | Nome         | Nome completo do usuário |
-    | tenant-id    | ID do tenant ativo       |
-    | tenant-name  | Nome do tenant ativo     |
-    | Logout       | Opção clicável           |
+    | tenant-id    | ID do tenant ativo      |
+    | tenant-name  | Nome do tenant ativo    |
+    | Logout       | Opção de logout         |
 
 Cenário: Logout bem-sucedido
-  Dado que o usuário está autenticado no sistema
-  E o dropdown do menu de perfil está aberto
-  Quando clica na opção de logout
+  Dado que o dropdown do perfil está aberto
+  Quando o usuário clica na opção "Logout"
   Então a sessão deve ser encerrada
   E o usuário deve ser redirecionado para a tela de login
 
-Cenário: Consistência multi-tenant
+Cenário: Consistência em contexto multi-tenant
   Dado que o usuário está autenticado em um tenant específico
-  Quando acessa o dropdown do menu de perfil
-  Então as informações de tenant-id e tenant-name devem corresponder ao tenant ativo da sessão
+  Quando acessa o dropdown do perfil
+  Então os dados exibidos devem corresponder ao tenant ativo da sessão
 ```
 
 # Dependências
 ## Internas
-- Serviço de autenticação para validar sessão do usuário
-- API de usuários para obter dados do perfil (nome, avatar)
-- API de tenants para obter informações do tenant ativo
-- Componente de cabeçalho existente para integração do menu
+- Sistema de autenticação e sessão de usuário
+- API de perfil do usuário (para obter dados e foto)
+- API de tenants (para obter dados do tenant ativo)
+- Componente de cabeçalho da aplicação
 
 ## Externas
-- Amazon S3 para armazenamento dos avatares dos usuários
-- Amazon CloudFront como CDN para distribuição otimizada das imagens
-- AWS IAM para gerenciamento seguro de permissões de acesso aos buckets
+- [TODO: requer esclarecimento do PO] Serviço de armazenamento de imagens/avatars
 
 # Requisitos Não-Funcionais
 ## Performance
 - O menu deve carregar em menos de 100ms após o login
-- Os avatares devem ser servidos via CloudFront com cache de pelo menos 1 dia
-- O dropdown deve abrir/fechar com animação suave (max 300ms)
-- Latência máxima de 500ms para carregamento de avatares via CDN
+- O dropdown deve abrir/fechar com animação suave (máximo 300ms)
+- As imagens de avatar devem ser otimizadas e carregadas de forma assíncrona
 
 ## Segurança
-- Bucket S3 configurado com acesso privado por padrão
-- URLs de avatares devem ser assinadas e ter tempo de expiração
-- Validação de sessão deve ser feita a cada interação com o menu
-- Logout deve invalidar token JWT/refresh token adequadamente
+- Dados sensíveis não devem ser expostos no frontend (apenas informações básicas de perfil)
+- O logout deve invalidar completamente o token de autenticação
+- [TODO: requer esclarecimento do PO] Política de cache para avatares
 
 ## Usabilidade
-- O ícone do menu deve ser claramente identificável como elemento clicável
-- O dropdown deve ser fechado ao clicar fora ou pressionar ESC
-- Deve ser totalmente acessível via teclado (tabindex, aria-labels)
-- Responsivo para diferentes tamanhos de tela
-- Avatares devem ter fallback visual durante carregamento
+- O avatar/iniciais devem ser claramente identificáveis como elemento clicável
+- O dropdown deve ser fechado automaticamente ao clicar fora da área
+- Deve ser responsivo e funcionar em dispositivos móveis
+- Contraste adequado para garantia de acessibilidade
