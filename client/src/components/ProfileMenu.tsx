@@ -23,7 +23,7 @@ const TRIGGER_ID = 'profile-menu-trigger';
 export function ProfileMenu() {
   const [isDropdownOpen, setDropdownOpen] = useState(false);
   const { authenticated, profile } = useUserProfile();
-  const { tenant } = useActiveTenant();
+  const { tenant, loading: tenantLoading, error: tenantError } = useActiveTenant();
   const triggerRef = useRef<HTMLButtonElement>(null);
 
   // RN001: menu só para autenticados.
@@ -71,6 +71,8 @@ export function ProfileMenu() {
         onCloseAndRestoreFocus={closeAndRestoreFocus}
         userData={profile}
         tenantData={tenant}
+        tenantLoading={tenantLoading}
+        tenantError={tenantError}
       />
     </div>
   );

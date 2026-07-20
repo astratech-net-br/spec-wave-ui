@@ -35,8 +35,12 @@ interface ProfileDropdownProps {
   /** Fecha e devolve o foco ao gatilho (ESC / clique em item). */
   onCloseAndRestoreFocus: () => void;
   userData: ProfileUserData;
-  /** Tenant ativo; `null` quando os dados estão indisponíveis (CE002). */
+  /** Tenant ativo; `null` enquanto carrega ou quando indisponível (CE002). */
   tenantData: ProfileTenantData | null;
+  /** Busca do tenant em andamento — exibe skeleton no lugar dos valores. */
+  tenantLoading?: boolean;
+  /** Falha ao buscar o tenant — exibe o placeholder de CE002. */
+  tenantError?: boolean;
   /** `id` do dropdown, referenciado pelo `aria-controls` do gatilho. */
   id?: string;
   /** `id` do gatilho, usado como `aria-labelledby` do menu. */
@@ -51,12 +55,42 @@ function orFallback(value: string | undefined): string {
   return value && value.trim() ? value : TENANT_FALLBACK;
 }
 
+// Campo de tenant em seus três estados (Task #80). Carregando → skeleton, que
+// ocupa a mesma altura do valor e por isso não desloca o layout do dropdown;
+// erro ou valor ausente → placeholder de CE002; caso contrário → o valor.
+function TenantField({
+  label,
+  value,
+  loading,
+}: {
+  label: string;
+  value: string | undefined;
+  loading: boolean;
+}) {
+  return (
+    <li className="profile-dropdown__info" aria-busy={loading || undefined}>
+      <span className="profile-dropdown__label">{label}</span>
+      {loading ? (
+        <span
+          className="profile-dropdown__value profile-dropdown__value--loading skeleton"
+          role="status"
+          aria-label={`Carregando ${label}`}
+        />
+      ) : (
+        <span className="profile-dropdown__value">{orFallback(value)}</span>
+      )}
+    </li>
+  );
+}
+
 export function ProfileDropdown({
   isOpen,
   onClose,
   onCloseAndRestoreFocus,
   userData,
   tenantData,
+  tenantLoading = false,
+  tenantError = false,
   id,
   labelledBy,
 }: ProfileDropdownProps) {
@@ -133,8 +167,10 @@ export function ProfileDropdown({
 
   if (!isOpen) return null;
 
-  const tenantId = orFallback(tenantData?.id);
-  const tenantName = orFallback(tenantData?.name);
+  // Só mostramos skeleton enquanto a busca corre. Com erro (CE002) — ou sem
+  // dados após o carregamento — os campos caem no placeholder, e o logout do
+  // rodapé permanece acionável.
+  const tenantPending = tenantLoading && !tenantError;
 
   // Fluxo de logout (Task #76 + #77): desabilita o botão e mostra carregamento
   // enquanto revoga a sessão; ao concluir, redireciona para o login. Em caso de
@@ -173,15 +209,8 @@ export function ProfileDropdown({
           )}
         </li>
 
-        <li className="profile-dropdown__info">
-          <span className="profile-dropdown__label">tenant-id</span>
-          <span className="profile-dropdown__value">{tenantId}</span>
-        </li>
-
-        <li className="profile-dropdown__info">
-          <span className="profile-dropdown__label">tenant-name</span>
-          <span className="profile-dropdown__value">{tenantName}</span>
-        </li>
+        <TenantField label="tenant-id" value={tenantData?.id} loading={tenantPending} />
+        <TenantField label="tenant-name" value={tenantData?.name} loading={tenantPending} />
 
         <li className="profile-dropdown__footer">
           <button
