@@ -25,6 +25,12 @@ export interface TeamInvite {
   role: string;
 }
 
+// Tenant ativo na sessão (menu de perfil, Story #70).
+export interface ActiveTenant {
+  id: string;
+  name: string;
+}
+
 async function jsonOrThrow<T>(res: Response, fallback: string): Promise<T> {
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -42,6 +48,10 @@ export async function openBilling(kind: 'checkout' | 'portal'): Promise<void> {
   const res = await apiFetch(`/api/billing/${kind}`, { method: 'POST' });
   const { url } = await jsonOrThrow<{ url: string }>(res, 'Falha ao abrir o billing');
   window.location.assign(url);
+}
+
+export async function fetchActiveTenant(): Promise<ActiveTenant> {
+  return jsonOrThrow(await apiFetch('/api/tenant/active'), 'Falha ao carregar o tenant');
 }
 
 export async function fetchTeam(): Promise<{ members: TeamMember[]; invites: TeamInvite[] }> {

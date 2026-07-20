@@ -3,11 +3,12 @@
 # start-dev-agent.sh — dispara o "dev agent" numa User Story marcada.
 #
 # Varre o GitHub Project configurado em .spec-wave.json e encontra as User Stories
-# elegíveis: issue do tipo Story (label [STORY]), no estado Todo (campo nativo
-# "Status" do Projects v2) e com o label spec-wave:dev-agent. Para a PRIMEIRA
-# elegível, roda `spec-wave implement <n> --dry-run` e, se ok, o `implement <n>`
-# real — encerrando assim que UMA implementa com sucesso (uma issue por execução;
-# rode o script de novo para a próxima).
+# elegíveis: issue do tipo Story (label [STORY]), na etapa "🚧 Desenvolvimento"
+# (campo "Etapa" do board), no estado Todo (campo nativo "Status" do Projects v2)
+# e com o label spec-wave:dev-agent. Stories em qualquer outra etapa são ignoradas.
+# Para a PRIMEIRA elegível, roda `spec-wave implement <n> --dry-run` e, se ok, o
+# `implement <n>` real — encerrando assim que UMA implementa com sucesso (uma issue
+# por execução; rode o script de novo para a próxima).
 #
 # Requisitos: gh (autenticado, escopo project) e jq no PATH.
 # Override do comando da CLI: SPEC_WAVE_CLI (default: "npx --yes @spec-wave/cli").
@@ -22,6 +23,7 @@ cd "$REPO_ROOT"
 CONFIG=".spec-wave.json"
 DEV_LABEL="spec-wave:dev-agent"
 STORY_LABEL="[STORY]"
+DEV_STAGE="🚧 Desenvolvimento"   # etapa (campo "Etapa" do board) em que o dev agent atua
 SPEC_WAVE_CLI="${SPEC_WAVE_CLI:-npx --yes @spec-wave/cli}"
 
 log()  { printf '\033[0;36m▸ %s\033[0m\n' "$*"; }
@@ -41,14 +43,17 @@ PROJECT="$(jq -r '.project.number // empty' "$CONFIG")"
 [[ -n "$OWNER" ]]   || die "owner ausente em $CONFIG."
 [[ -n "$PROJECT" ]] || die "project.number ausente em $CONFIG (o repo tem um Projects v2 vinculado?)."
 
-log "Varrendo o Project #$PROJECT de $OWNER por User Stories em Todo com o label $DEV_LABEL…"
+log "Varrendo o Project #$PROJECT de $OWNER por User Stories na etapa '$DEV_STAGE' (Status Todo) com o label $DEV_LABEL…"
 
 # --- Scan: números das Stories elegíveis (ordem do board) ---
+# Só considera issues cuja Etapa é "🚧 Desenvolvimento"; qualquer outra etapa
+# (Backlog, Ready, Code Review, Done, …) é ignorada.
 mapfile -t CANDIDATES < <(
   gh project item-list "$PROJECT" --owner "$OWNER" --format json --limit 500 \
-    | jq -r --arg dev "$DEV_LABEL" --arg story "$STORY_LABEL" '
+    | jq -r --arg dev "$DEV_LABEL" --arg story "$STORY_LABEL" --arg stage "$DEV_STAGE" '
         .items[]
         | select(.content.type == "Issue")
+        | select(.etapa == $stage)
         | select(.status == "Todo")
         | select(.labels != null and (.labels | index($dev)))
         | select(.labels | index($story))
@@ -56,7 +61,7 @@ mapfile -t CANDIDATES < <(
 )
 
 if [[ ${#CANDIDATES[@]} -eq 0 ]]; then
-  ok "Nenhuma Story elegível (label $DEV_LABEL + estado Todo). Nada a fazer."
+  ok "Nenhuma Story elegível (etapa '$DEV_STAGE' + Status Todo + label $DEV_LABEL). Nada a fazer."
   exit 0
 fi
 
