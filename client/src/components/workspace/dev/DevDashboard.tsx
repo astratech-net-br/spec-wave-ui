@@ -1,42 +1,65 @@
-// Dashboard do Developer (RFC-003 §4): foco exclusivo no milestone corrente
-// (selecionado no topo do workspace).
+// Dashboard do Developer (spec "Workspace do Developer" §3.1): um trampolim —
+// quatro cards numéricos, cada um navegando para a view correspondente. Sem
+// gráficos e sem insights; o escopo é o milestone corrente do topbar.
 
+import { useMemo } from 'react';
 import type { WorkspacePageProps } from '../types';
-import { WidgetCard } from '../WidgetCard';
-import { AiSummary } from '../AiSummary';
-import {
-  inMilestone,
-  isOpen,
-  isStory,
-  started,
-  waitingReview,
-} from '../../../lib/workspaceSelectors';
+import { hrefForWorkspace } from '../../../lib/router';
+import { isOpen } from '../../../lib/workspaceSelectors';
+import { isExecItem } from '../tech/executionShared';
+import { DevGate, isMine, prInReview, prWaitingMyReview } from './devShared';
 
-export function DevDashboard({ repoId, snapshot, milestoneNumber }: WorkspacePageProps) {
-  const milestone = snapshot.milestones.find((m) => m.number === milestoneNumber);
-  const stories = inMilestone(
-    snapshot.items.filter((i) => isStory(i) && isOpen(i)),
-    milestoneNumber,
+export function DevDashboard({ snapshot, milestoneNumber }: WorkspacePageProps) {
+  const scope = useMemo(
+    () =>
+      snapshot.items.filter(
+        (i) => isExecItem(i) && isOpen(i) && i.milestone?.number === milestoneNumber,
+      ),
+    [snapshot.items, milestoneNumber],
   );
 
-  const assigned = stories.filter((s) => s.assignees.length > 0).length;
-  const inProgress = stories.filter(started).length;
-  const pendingReviews = stories.filter(waitingReview).length;
-
   return (
-    <div className="ws-page">
-      <div className="widgets">
-        <WidgetCard
-          label="Current Milestone"
-          value={milestone ? milestone.title : 'Todos'}
-          hint={milestone?.dueOn ? `alvo ${milestone.dueOn.slice(0, 10)}` : undefined}
-        />
-        <WidgetCard label="Assigned Stories" value={assigned} hint={`de ${stories.length} abertas`} />
-        <WidgetCard label="Stories in Progress" value={inProgress} />
-        <WidgetCard label="Pending Reviews" value={pendingReviews} />
-      </div>
+    <DevGate snapshot={snapshot} milestoneNumber={milestoneNumber}>
+      {(login, milestone) => {
+        const inProgress = scope.filter((i) => i.stage === 'Development' && isMine(i, login)).length;
+        const ready = scope.filter((i) => i.stage === 'Ready').length;
+        const myPrs = scope
+          .filter((i) => isMine(i, login))
+          .flatMap((i) => i.prs)
+          .filter(prInReview).length;
+        const waitingMe = scope.flatMap((i) => i.prs).filter((pr) => prWaitingMyReview(pr, login))
+          .length;
 
-      <AiSummary repoId={repoId} scope="dev-daily" title="AI Daily Summary" />
-    </div>
+        const cards = [
+          { label: 'Em andamento', value: inProgress, page: 'in-progress', warn: false },
+          { label: 'Prontos para pull', value: ready, page: 'pending', warn: false },
+          { label: 'Meus PRs em review', value: myPrs, page: 'code-review', warn: false },
+          { label: 'Esperando meu review', value: waitingMe, page: 'code-review', warn: waitingMe > 0 },
+        ];
+
+        return (
+          <div className="ws-page">
+            <div className="bl-head">
+              <span className="bl-head__count">
+                {milestone.title}
+                {milestone.dueOn ? ` — alvo ${milestone.dueOn.slice(0, 10)}` : ''}
+              </span>
+            </div>
+            <div className="widgets">
+              {cards.map((c) => (
+                <a
+                  key={c.label}
+                  className={`widget dv-card${c.warn ? ' dv-card--warn' : ''}`}
+                  href={hrefForWorkspace('dev', c.page)}
+                >
+                  <span className="widget__value">{c.value}</span>
+                  <span className="widget__label">{c.label}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        );
+      }}
+    </DevGate>
   );
 }

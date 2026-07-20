@@ -2,6 +2,7 @@
 
 import { Router } from 'express';
 import { requireOwner } from '../middleware/auth.ts';
+import { repoAccessParamGuard } from '../middleware/authorize.ts';
 import {
   getAllRepositories,
   getRepositoryById,
@@ -10,9 +11,18 @@ import {
   postRepository,
 } from '../controllers/RepositoryController.ts';
 import {
+  archiveRepositoryWorkItem,
+  bulkArchiveWorkItems,
+  bulkPrioritizeWorkItems,
+  bulkReparentWorkItems,
   createRepositoryFeature,
   createRepositoryWorkItem,
   deleteRepositoryWorkItem,
+  getEstimatesMeta,
+  getStageAges,
+  patchFeatureEstimate,
+  patchWorkItemRank,
+  prioritizeRepositoryWorkItem,
   getRepositoryWorkItem,
   reorderWorkItems,
   reparentWorkItem,
@@ -22,8 +32,11 @@ import {
   updateRepositoryWorkItem,
 } from '../controllers/WorkItemController.ts';
 import {
+  deleteRepositoryMilestone,
   getRepositoryMilestones,
+  patchFeatureMilestone,
   patchRepositoryMilestone,
+  postMilestoneReleaseNotes,
   postRepositoryMilestone,
   putStoryMilestone,
 } from '../controllers/MilestoneController.ts';
@@ -35,10 +48,58 @@ import {
   refineFeatureArtifact,
   saveFeatureArtifact,
 } from '../controllers/ArtifactController.ts';
+import {
+  deleteReviewDraftHandler,
+  getDecomposition,
+  getFeaturePlanStatus,
+  getPlanValidationHandler,
+  patchDecomposition,
+  postDecompositionGenerate,
+  postDecompositionMaterialize,
+  getPreReviewHandler,
+  getReviewCycleHandler,
+  getReviewDrafts,
+  patchReviewDraft,
+  postPreReviewRun,
+  postReturnToPm,
+  postReviewDraft,
+} from '../controllers/TechReviewController.ts';
+import {
+  getQaReturnInfo,
+  patchTaskState,
+  patchWorkItemPoints,
+  postProgressSummary,
+  postQaApprove,
+  postQaReturn,
+  postReturnToReady,
+  postStartWork,
+  postUatApprove,
+  postUatReturn,
+} from '../controllers/ExecutionController.ts';
 import { getRepositorySnapshot } from '../controllers/SnapshotController.ts';
+import { getDiscussions, postDiscussion } from '../controllers/DiscussionController.ts';
 import { postRepositoryInsight } from '../controllers/InsightsController.ts';
+import {
+  getFeaturePlanBlob,
+  getFeaturePlanMeta,
+  getFeatureReviewComments,
+  getFeatureSpecBlob,
+  getFeatureSpecMeta,
+  getFeatureSpecSection,
+  getFeatureSpecStatus,
+  patchReviewCommentTriage,
+  postReturnToPrioritization,
+  postReviewCommentReply,
+  postSpecApprove,
+} from '../controllers/SpecReviewController.ts';
 
 export const repositoryRoutes = Router();
+
+// Autorização por papel (spec Gestão de usuários §4): um guard único por :id —
+// leitura exige algum papel no repositório (ou owner); escrita exige o papel
+// da spec da tela (tabela em middleware/authorize.ts). Desligado com
+// AUTH_ENFORCED=false (modo de transição).
+repositoryRoutes.param('id', repoAccessParamGuard);
 
 // GET /api/repositories → lista todos os repositórios conectados.
 repositoryRoutes.get('/repositories', (req, res, next) => {
@@ -69,6 +130,13 @@ repositoryRoutes.get('/repositories/:id/snapshot', (req, res, next) => {
 repositoryRoutes.get('/repositories/:id/milestones', getRepositoryMilestones);
 repositoryRoutes.post('/repositories/:id/milestones', postRepositoryMilestone);
 repositoryRoutes.patch('/repositories/:id/milestones/:milestoneNumber', patchRepositoryMilestone);
+repositoryRoutes.delete('/repositories/:id/milestones/:milestoneNumber', deleteRepositoryMilestone);
+repositoryRoutes.post(
+  '/repositories/:id/milestones/:milestoneNumber/release-notes',
+  (req, res, next) => {
+    postMilestoneReleaseNotes(req, res, next).catch(next);
+  },
+);
 
 // PUT /api/repositories/:id/workitems/story/:number/milestone → atribui/remove
 // o milestone de uma Story (só Stories entram em milestones — RFC-003).
@@ -95,6 +163,108 @@ repositoryRoutes.patch('/repositories/:id/workitems/:level/:number/stage', setWo
 // DELETE /api/repositories/:id/workitems/:level/:number → fecha a issue
 // ("Delete" do Backlog do PM).
 repositoryRoutes.delete('/repositories/:id/workitems/:level/:number', deleteRepositoryWorkItem);
+
+// POST /api/repositories/:id/workitems/:level/:number/archive → arquiva (fecha)
+// o item + todos os descendentes (Backlog do PM).
+repositoryRoutes.post('/repositories/:id/workitems/:level/:number/archive', (req, res, next) => {
+  archiveRepositoryWorkItem(req, res, next).catch(next);
+});
+
+// Backlog do PM — priorização (prioridade + etapa + rank) e operações em lote.
+// Os bulk vêm ANTES das rotas parametrizadas por clareza (shapes não colidem).
+repositoryRoutes.post('/repositories/:id/workitems/bulk/prioritize', (req, res, next) => {
+  bulkPrioritizeWorkItems(req, res, next).catch(next);
+});
+repositoryRoutes.post('/repositories/:id/workitems/bulk/reparent', (req, res, next) => {
+  bulkReparentWorkItems(req, res, next).catch(next);
+});
+repositoryRoutes.post('/repositories/:id/workitems/bulk/archive', (req, res, next) => {
+  bulkArchiveWorkItems(req, res, next).catch(next);
+});
+repositoryRoutes.post('/repositories/:id/workitems/:level/:number/prioritize', (req, res, next) => {
+  prioritizeRepositoryWorkItem(req, res, next).catch(next);
+});
+
+// Rank (drag da Prioritization) e idades por etapa (tempo-na-etapa).
+repositoryRoutes.patch('/repositories/:id/workitems/:level/:number/rank', (req, res, next) => {
+  patchWorkItemRank(req, res, next).catch(next);
+});
+
+// Telas de execução do TL: pontos inline, devolução p/ Ready, vereditos de QA
+// e resumo de progresso por milestone.
+repositoryRoutes.patch('/repositories/:id/workitems/:level/:number/points', (req, res, next) => {
+  patchWorkItemPoints(req, res, next).catch(next);
+});
+repositoryRoutes.post(
+  '/repositories/:id/workitems/:level/:number/return-to-ready',
+  (req, res, next) => {
+    postReturnToReady(req, res, next).catch(next);
+  },
+);
+repositoryRoutes.post('/repositories/:id/workitems/:level/:number/qa-approve', (req, res, next) => {
+  postQaApprove(req, res, next).catch(next);
+});
+repositoryRoutes.post('/repositories/:id/workitems/:level/:number/qa-return', (req, res, next) => {
+  postQaReturn(req, res, next).catch(next);
+});
+
+// Homologação do PM: aceite de negócio (approve + verificação D4) e devolução
+// com marcador uat-return; seção da spec da Feature para o painel de validação.
+repositoryRoutes.post('/repositories/:id/workitems/:level/:number/uat-approve', (req, res, next) => {
+  postUatApprove(req, res, next).catch(next);
+});
+repositoryRoutes.post('/repositories/:id/workitems/:level/:number/uat-return', (req, res, next) => {
+  postUatReturn(req, res, next).catch(next);
+});
+repositoryRoutes.get(
+  '/repositories/:id/workitems/feature/:number/spec-section',
+  (req, res, next) => {
+    getFeatureSpecSection(req, res, next).catch(next);
+  },
+);
+
+// Discussão integrada: canal Slack por Feature + indicadores das filas.
+repositoryRoutes.post('/repositories/:id/workitems/:level/:number/discussion', (req, res, next) => {
+  postDiscussion(req, res, next).catch(next);
+});
+repositoryRoutes.get('/repositories/:id/discussions', (req, res, next) => {
+  getDiscussions(req, res, next).catch(next);
+});
+
+// Workspace do Developer: pull (start), Tasks checáveis e retorno de QA.
+repositoryRoutes.post('/repositories/:id/workitems/:level/:number/start', (req, res, next) => {
+  postStartWork(req, res, next).catch(next);
+});
+repositoryRoutes.patch('/repositories/:id/workitems/:level/:number/state', (req, res, next) => {
+  patchTaskState(req, res, next).catch(next);
+});
+repositoryRoutes.get(
+  '/repositories/:id/workitems/:level/:number/qa-return-info',
+  (req, res, next) => {
+    getQaReturnInfo(req, res, next).catch(next);
+  },
+);
+repositoryRoutes.post(
+  '/repositories/:id/milestones/:milestoneNumber/progress-summary',
+  (req, res, next) => {
+    postProgressSummary(req, res, next).catch(next);
+  },
+);
+repositoryRoutes.get('/repositories/:id/stage-ages', (req, res, next) => {
+  getStageAges(req, res, next).catch(next);
+});
+
+// Planning: milestone da Feature com cascata (Stories/Bugs filhos), estimativa
+// manual e metadados batch das estimativas.
+repositoryRoutes.patch('/repositories/:id/workitems/feature/:number/milestone', (req, res, next) => {
+  patchFeatureMilestone(req, res, next).catch(next);
+});
+repositoryRoutes.patch('/repositories/:id/workitems/feature/:number/estimate', (req, res, next) => {
+  patchFeatureEstimate(req, res, next).catch(next);
+});
+repositoryRoutes.get('/repositories/:id/estimates-meta', (req, res, next) => {
+  getEstimatesMeta(req, res, next).catch(next);
+});
 
 // PATCH /api/repositories/:id/workitems/:level/:number → edita título/corpo da issue.
 repositoryRoutes.patch('/repositories/:id/workitems/:level/:number', updateRepositoryWorkItem);
@@ -147,6 +317,129 @@ repositoryRoutes.post(
 repositoryRoutes.post(
   '/repositories/:id/workitems/feature/:number/decompose',
   decomposeFeatureHandler,
+);
+
+// Tela Specification do PM: versões/status do spec.md, triagem de comentários
+// de revisão (marcador <!-- spec-review -->) e aprovação/retorno.
+repositoryRoutes.get('/repositories/:id/workitems/feature/:number/spec/meta', (req, res, next) => {
+  getFeatureSpecMeta(req, res, next).catch(next);
+});
+repositoryRoutes.get(
+  '/repositories/:id/workitems/feature/:number/spec/blob/:sha',
+  (req, res, next) => {
+    getFeatureSpecBlob(req, res, next).catch(next);
+  },
+);
+repositoryRoutes.get(
+  '/repositories/:id/workitems/feature/:number/spec/status',
+  (req, res, next) => {
+    getFeatureSpecStatus(req, res, next).catch(next);
+  },
+);
+repositoryRoutes.get(
+  '/repositories/:id/workitems/feature/:number/review-comments',
+  (req, res, next) => {
+    getFeatureReviewComments(req, res, next).catch(next);
+  },
+);
+repositoryRoutes.patch(
+  '/repositories/:id/workitems/feature/:number/review-comments/:commentId',
+  (req, res, next) => {
+    patchReviewCommentTriage(req, res, next).catch(next);
+  },
+);
+repositoryRoutes.post(
+  '/repositories/:id/workitems/feature/:number/review-comments/reply',
+  (req, res, next) => {
+    postReviewCommentReply(req, res, next).catch(next);
+  },
+);
+repositoryRoutes.post(
+  '/repositories/:id/workitems/feature/:number/spec/approve',
+  (req, res, next) => {
+    postSpecApprove(req, res, next).catch(next);
+  },
+);
+repositoryRoutes.post(
+  '/repositories/:id/workitems/feature/:number/return-to-prioritization',
+  (req, res, next) => {
+    postReturnToPrioritization(req, res, next).catch(next);
+  },
+);
+
+// Revisão técnica do TL (Backlog view do Tech Leader): rascunhos staged,
+// devolução ao PM, ciclo de re-revisão, status do plan e pré-review por IA.
+repositoryRoutes.get('/repositories/:id/workitems/feature/:number/review-drafts', (req, res, next) => {
+  getReviewDrafts(req, res, next).catch(next);
+});
+repositoryRoutes.post('/repositories/:id/workitems/feature/:number/review-drafts', (req, res, next) => {
+  postReviewDraft(req, res, next).catch(next);
+});
+repositoryRoutes.patch(
+  '/repositories/:id/workitems/feature/:number/review-drafts/:draftId',
+  (req, res, next) => {
+    patchReviewDraft(req, res, next).catch(next);
+  },
+);
+repositoryRoutes.delete(
+  '/repositories/:id/workitems/feature/:number/review-drafts/:draftId',
+  (req, res, next) => {
+    deleteReviewDraftHandler(req, res, next).catch(next);
+  },
+);
+repositoryRoutes.post('/repositories/:id/workitems/feature/:number/return-to-pm', (req, res, next) => {
+  postReturnToPm(req, res, next).catch(next);
+});
+repositoryRoutes.get('/repositories/:id/workitems/feature/:number/review-cycle', (req, res, next) => {
+  getReviewCycleHandler(req, res, next).catch(next);
+});
+repositoryRoutes.get('/repositories/:id/workitems/feature/:number/plan/status', (req, res, next) => {
+  getFeaturePlanStatus(req, res, next).catch(next);
+});
+repositoryRoutes.get('/repositories/:id/workitems/feature/:number/pre-review', (req, res, next) => {
+  getPreReviewHandler(req, res, next).catch(next);
+});
+repositoryRoutes.post(
+  '/repositories/:id/workitems/feature/:number/pre-review/run',
+  (req, res, next) => {
+    postPreReviewRun(req, res, next).catch(next);
+  },
+);
+
+// Plan view do TL: meta/blob do plan.md, validação (validate.yml) e decomposição
+// em duas fases (proposta LLM + materialização idempotente via API).
+repositoryRoutes.get('/repositories/:id/workitems/feature/:number/plan/meta', (req, res, next) => {
+  getFeaturePlanMeta(req, res, next).catch(next);
+});
+repositoryRoutes.get(
+  '/repositories/:id/workitems/feature/:number/plan/blob/:sha',
+  (req, res, next) => {
+    getFeaturePlanBlob(req, res, next).catch(next);
+  },
+);
+repositoryRoutes.get('/repositories/:id/plan-validation', (req, res, next) => {
+  getPlanValidationHandler(req, res, next).catch(next);
+});
+repositoryRoutes.post(
+  '/repositories/:id/workitems/feature/:number/decomposition/generate',
+  (req, res, next) => {
+    postDecompositionGenerate(req, res, next).catch(next);
+  },
+);
+repositoryRoutes.get('/repositories/:id/workitems/feature/:number/decomposition', (req, res, next) => {
+  getDecomposition(req, res, next).catch(next);
+});
+repositoryRoutes.patch(
+  '/repositories/:id/workitems/feature/:number/decomposition',
+  (req, res, next) => {
+    patchDecomposition(req, res, next).catch(next);
+  },
+);
+repositoryRoutes.post(
+  '/repositories/:id/workitems/feature/:number/decomposition/materialize',
+  (req, res, next) => {
+    postDecompositionMaterialize(req, res, next).catch(next);
+  },
 );
 
 // POST /api/repositories/:id/ai/summary → AI insight/summary de um escopo

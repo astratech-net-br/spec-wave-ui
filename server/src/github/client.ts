@@ -121,13 +121,23 @@ query RepoEpics($owner: String!, $repo: String!) {
 }`;
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// Extrai o valor do campo single-select "Status" do(s) Project(s) v2 da issue.
-// Valores de outros tipos de campo voltam como `{}` (não casaram o fragmento),
-// então filtramos por `field.name === 'Status'`. Pega o primeiro que encontrar.
+// Valor do campo single-select "Status" (Todo/In Progress/Done) do board.
 function projectStatusOf(node: any): string | null {
+  return projectFieldOf(node, 'Status');
+}
+
+// Valor do campo "Etapa" (single-select do board) — a fase do kanban da issue.
+function projectStageOf(node: any): string | null {
+  return projectFieldOf(node, 'Etapa');
+}
+
+// Extrai o valor do primeiro campo single-select com o `name` dado nos
+// Project(s) v2 da issue. Valores de outros tipos de campo voltam como `{}`
+// (não casaram o fragmento), então filtramos por `field.name`.
+function projectFieldOf(node: any, fieldName: string): string | null {
   for (const item of node.projectItems?.nodes ?? []) {
     for (const fv of item.fieldValues?.nodes ?? []) {
-      if (fv?.field?.name === 'Status' && typeof fv.name === 'string') return fv.name;
+      if (fv?.field?.name === fieldName && typeof fv.name === 'string') return fv.name;
     }
   }
   return null;
@@ -147,6 +157,7 @@ function normalize(node: any): GhIssue {
       ? { title: node.milestone.title, dueOn: node.milestone.dueOn, createdAt: node.milestone.createdAt }
       : null,
     projectStatus: projectStatusOf(node),
+    projectStage: projectStageOf(node),
     subIssues: (node.subIssues?.nodes ?? []).map(normalize),
   };
 }
@@ -251,6 +262,7 @@ query RepoSnapshot($owner: String!, $repo: String!, $cursor: String) {
         url
         state
         createdAt
+        closedAt
         labels(first: 20) { nodes { name } }
         assignees(first: 5) { nodes { login name } }
         milestone { number title }
@@ -263,6 +275,10 @@ query RepoSnapshot($owner: String!, $repo: String!, $cursor: String) {
                 ... on ProjectV2ItemFieldSingleSelectValue {
                   name
                   field { ... on ProjectV2SingleSelectField { name } }
+                }
+                ... on ProjectV2ItemFieldNumberValue {
+                  number
+                  field { ... on ProjectV2Field { name } }
                 }
               }
             }
@@ -294,14 +310,15 @@ query RepoSnapshot($owner: String!, $repo: String!, $cursor: String) {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function normalizeSnapshotIssue(node: any): GhSnapshotIssue {
-  // Todos os valores single-select de todos os boards da issue: campo → opção.
-  // O snapshotService decide qual campo é o de etapa (stageOptions do repo).
+  // Todos os valores single-select E numéricos de todos os boards da issue:
+  // campo → valor (números viram string; ex.: Rank). O snapshotService decide
+  // qual campo é o de etapa (stageOptions do repo).
   const projectFieldValues: Record<string, string> = {};
   for (const item of node.projectItems?.nodes ?? []) {
     for (const fv of item.fieldValues?.nodes ?? []) {
-      if (fv?.field?.name && typeof fv.name === 'string' && !(fv.field.name in projectFieldValues)) {
-        projectFieldValues[fv.field.name] = fv.name;
-      }
+      if (!fv?.field?.name || fv.field.name in projectFieldValues) continue;
+      if (typeof fv.name === 'string') projectFieldValues[fv.field.name] = fv.name;
+      else if (typeof fv.number === 'number') projectFieldValues[fv.field.name] = String(fv.number);
     }
   }
 
@@ -326,6 +343,7 @@ function normalizeSnapshotIssue(node: any): GhSnapshotIssue {
     url: node.url,
     state: node.state,
     createdAt: node.createdAt,
+    closedAt: node.closedAt ?? null,
     labels: (node.labels?.nodes ?? []).map((l: any) => l.name),
     assignees: (node.assignees?.nodes ?? []).map((u: any) => ({ login: u.login, name: u.name })),
     milestone: node.milestone
@@ -413,6 +431,7 @@ export async function listMilestones(config: GitHubConfig): Promise<GhMilestoneS
     state?: string;
     open_issues?: number;
     closed_issues?: number;
+    description?: string | null;
   }>;
   return json.map((m) => ({
     number: m.number ?? 0,
@@ -421,6 +440,7 @@ export async function listMilestones(config: GitHubConfig): Promise<GhMilestoneS
     state: m.state === 'closed' ? 'closed' : 'open',
     openIssues: m.open_issues ?? 0,
     closedIssues: m.closed_issues ?? 0,
+    description: m.description ?? null,
   }));
 }
 
@@ -474,6 +494,136 @@ export async function fetchIssueComments(config: GitHubConfig, number: number): 
   if (!res.ok) throw new UpstreamError(`GitHub Issues API ${res.status}: ${await res.text()}`);
   const json = JSON.parse(await res.text()) as Array<{ body?: string }>;
   return json.map((c) => c.body ?? '');
+}
+
+// Comentário de issue com metadados (id/autor/data) — usado pela triagem de
+// revisões da spec (tela Specification do PM). 404 → [].
+export interface GhIssueComment {
+  id: number;
+  body: string;
+  author: string;
+  createdAt: string; // ISO
+}
+
+export async function fetchIssueCommentsFull(
+  config: GitHubConfig,
+  number: number,
+): Promise<GhIssueComment[]> {
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/issues/${number}/comments?per_page=100`;
+  const res = await cachedGet(url, {
+    Authorization: `bearer ${config.token}`,
+    Accept: 'application/vnd.github+json',
+  });
+  if (res.status === 404) return [];
+  if (!res.ok) throw new UpstreamError(`GitHub Issues API ${res.status}: ${await res.text()}`);
+  const json = JSON.parse(await res.text()) as Array<{
+    id?: number;
+    body?: string;
+    user?: { login?: string };
+    created_at?: string;
+  }>;
+  return json
+    .filter((c) => typeof c.id === 'number')
+    .map((c) => ({
+      id: c.id as number,
+      body: c.body ?? '',
+      author: c.user?.login ?? '—',
+      createdAt: c.created_at ?? '',
+    }));
+}
+
+// Histórico de commits de um arquivo (REST /commits?path=...), mais recente
+// primeiro. É o histórico de versões do spec.md — v{n} = n-ésimo commit.
+export interface GhFileCommit {
+  sha: string;
+  message: string;
+  committedAt: string; // ISO
+}
+
+export async function listFileCommits(
+  config: GitHubConfig,
+  path: string,
+  limit = 30,
+): Promise<GhFileCommit[]> {
+  const url =
+    `https://api.github.com/repos/${config.owner}/${config.repo}/commits` +
+    `?path=${encodeURIComponent(path)}&per_page=${limit}`;
+  const res = await cachedGet(url, {
+    Authorization: `bearer ${config.token}`,
+    Accept: 'application/vnd.github+json',
+  });
+  if (res.status === 404) return [];
+  if (!res.ok) throw new UpstreamError(`GitHub Commits API ${res.status}: ${await res.text()}`);
+  const json = JSON.parse(await res.text()) as Array<{
+    sha?: string;
+    commit?: { message?: string; committer?: { date?: string }; author?: { date?: string } };
+  }>;
+  return json
+    .filter((c) => typeof c.sha === 'string')
+    .map((c) => ({
+      sha: c.sha as string,
+      message: (c.commit?.message ?? '').split('\n')[0],
+      committedAt: c.commit?.committer?.date ?? c.commit?.author?.date ?? '',
+    }));
+}
+
+// Lê um arquivo numa revisão específica (Contents API + ref). 404 → null.
+// Usado pelo diff de versões da spec.
+export async function fetchFileContentAtRef(
+  config: GitHubConfig,
+  path: string,
+  ref: string,
+): Promise<string | null> {
+  const url =
+    `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${path}` +
+    `?ref=${encodeURIComponent(ref)}`;
+  const res = await cachedGet(url, {
+    Authorization: `bearer ${config.token}`,
+    Accept: 'application/vnd.github.raw+json',
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new UpstreamError(`GitHub Contents API ${res.status}: ${await res.text()}`);
+  return res.text();
+}
+
+// Última execução de um workflow (Actions API). null = workflow inexistente ou
+// sem execuções. Best-effort para o estado "Erro" da fila de Specification.
+export interface GhWorkflowRun {
+  status: string; // queued | in_progress | completed
+  conclusion: string | null; // success | failure | ...
+  url: string;
+  createdAt: string;
+}
+
+export async function fetchLatestWorkflowRun(
+  config: GitHubConfig,
+  workflowFile: string,
+): Promise<GhWorkflowRun | null> {
+  const url =
+    `https://api.github.com/repos/${config.owner}/${config.repo}/actions/workflows/` +
+    `${encodeURIComponent(workflowFile)}/runs?per_page=1`;
+  const res = await cachedGet(url, {
+    Authorization: `bearer ${config.token}`,
+    Accept: 'application/vnd.github+json',
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new UpstreamError(`GitHub Actions API ${res.status}: ${await res.text()}`);
+  const json = JSON.parse(await res.text()) as {
+    workflow_runs?: Array<{
+      status?: string;
+      conclusion?: string | null;
+      html_url?: string;
+      created_at?: string;
+    }>;
+  };
+  const run = json.workflow_runs?.[0];
+  if (!run) return null;
+  return {
+    status: run.status ?? '',
+    conclusion: run.conclusion ?? null,
+    url: run.html_url ?? '',
+    createdAt: run.created_at ?? '',
+  };
 }
 
 // Atualiza título/corpo de uma issue (REST PATCH). Só envia os campos presentes.
@@ -652,6 +802,44 @@ export async function removeLabel(
 
 // Abre/fecha uma issue (REST PATCH state). Usado pelo "Delete" do Backlog
 // (RFC-003): apagar = fechar a issue (GitHub não deleta issues via API).
+// Substitui os assignees de uma issue (REST PATCH; [] limpa). Usado no
+// "Devolver para Ready" da view Development do TL.
+export async function setIssueAssignees(
+  config: GitHubConfig,
+  number: number,
+  assignees: string[],
+): Promise<void> {
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/issues/${number}`;
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ assignees }),
+  });
+  if (res.status === 404) {
+    throw new NotFoundError(`Issue #${number} não encontrada em ${config.owner}/${config.repo}.`);
+  }
+  if (!res.ok) throw new UpstreamError(`GitHub Issues API ${res.status}: ${await res.text()}`);
+}
+
+// O login é collaborator do repositório? (aviso não bloqueante ao conceder o
+// papel Dev — não-collaborator não pode ser assignee de issues.)
+export async function isRepoCollaborator(
+  config: GitHubConfig,
+  username: string,
+): Promise<boolean> {
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/collaborators/${username}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `bearer ${config.token}`, Accept: 'application/vnd.github+json' },
+  });
+  if (res.status === 204) return true;
+  if (res.status === 404) return false;
+  throw new UpstreamError(`GitHub Collaborators API ${res.status}: ${await res.text()}`);
+}
+
 export async function updateIssueState(
   config: GitHubConfig,
   number: number,
@@ -701,6 +889,7 @@ export async function createMilestone(
     state?: string;
     open_issues?: number;
     closed_issues?: number;
+    description?: string | null;
   };
   return {
     number: json.number ?? 0,
@@ -709,19 +898,22 @@ export async function createMilestone(
     state: json.state === 'closed' ? 'closed' : 'open',
     openIssues: json.open_issues ?? 0,
     closedIssues: json.closed_issues ?? 0,
+    description: json.description ?? null,
   };
 }
 
-// Edita um milestone (REST PATCH): título, data-alvo (null limpa) e/ou estado.
+// Edita um milestone (REST PATCH): título, data-alvo (null limpa), estado e/ou
+// descrição (onde o planner guarda metadados de início/capacidade).
 export async function updateMilestone(
   config: GitHubConfig,
   milestoneNumber: number,
-  patch: { title?: string; dueOn?: string | null; state?: 'open' | 'closed' },
+  patch: { title?: string; dueOn?: string | null; state?: 'open' | 'closed'; description?: string },
 ): Promise<void> {
   const body: Record<string, unknown> = {};
   if (patch.title !== undefined) body.title = patch.title;
   if (patch.dueOn !== undefined) body.due_on = patch.dueOn;
   if (patch.state !== undefined) body.state = patch.state;
+  if (patch.description !== undefined) body.description = patch.description;
 
   const url = `https://api.github.com/repos/${config.owner}/${config.repo}/milestones/${milestoneNumber}`;
   const res = await fetch(url, {
@@ -739,6 +931,29 @@ export async function updateMilestone(
     );
   }
   if (!res.ok) throw new UpstreamError(`GitHub Milestones API ${res.status}: ${await res.text()}`);
+}
+
+// Exclui um milestone (REST DELETE). As issues atribuídas ficam sem milestone.
+export async function deleteMilestone(
+  config: GitHubConfig,
+  milestoneNumber: number,
+): Promise<void> {
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/milestones/${milestoneNumber}`;
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      Accept: 'application/vnd.github+json',
+    },
+  });
+  if (res.status === 404) {
+    throw new NotFoundError(
+      `Milestone #${milestoneNumber} não encontrado em ${config.owner}/${config.repo}.`,
+    );
+  }
+  if (!res.ok && res.status !== 204) {
+    throw new UpstreamError(`GitHub Milestones API ${res.status}: ${await res.text()}`);
+  }
 }
 
 // Atribui/remove o milestone de uma issue (REST PATCH; null desatribui). É o
@@ -772,7 +987,7 @@ export async function createComment(
   config: GitHubConfig,
   number: number,
   body: string,
-): Promise<void> {
+): Promise<number> {
   const url = `https://api.github.com/repos/${config.owner}/${config.repo}/issues/${number}/comments`;
   const res = await fetch(url, {
     method: 'POST',
@@ -787,6 +1002,8 @@ export async function createComment(
     throw new NotFoundError(`Issue #${number} não encontrada em ${config.owner}/${config.repo}.`);
   }
   if (!res.ok) throw new UpstreamError(`GitHub Issues API ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as { id?: number };
+  return json.id ?? 0;
 }
 
 // Lê o SHA atual de um arquivo (Contents API, metadados JSON). Necessário para
@@ -1063,6 +1280,108 @@ export async function moveProjectStage(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ query, variables: { projectId, itemId, fieldId, optionId } }),
+  });
+  if (!res.ok) throw new UpstreamError(`GitHub API ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as { errors?: { message: string }[] };
+  if (json.errors) {
+    throw new UpstreamError(`GitHub GraphQL: ${json.errors.map((e) => e.message).join('; ')}`);
+  }
+}
+
+// ---- Campo numérico do Projects v2 (ex.: "Rank" do Backlog) ----
+
+// Localiza um campo numérico pelo nome. null = não existe no project.
+export async function fetchNumberField(
+  config: GitHubConfig,
+  projectId: string,
+  fieldName: string,
+): Promise<{ id: string } | null> {
+  const query = `
+    query GetNumberField($projectId: ID!) {
+      node(id: $projectId) {
+        ... on ProjectV2 {
+          fields(first: 50) {
+            nodes { ... on ProjectV2Field { id name dataType } }
+          }
+        }
+      }
+    }`;
+  const res = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query, variables: { projectId } }),
+  });
+  if (!res.ok) throw new UpstreamError(`GitHub API ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as {
+    errors?: { message: string }[];
+    data?: { node?: { fields?: { nodes?: { id?: string; name?: string; dataType?: string }[] } } };
+  };
+  if (json.errors) {
+    throw new UpstreamError(`GitHub GraphQL: ${json.errors.map((e) => e.message).join('; ')}`);
+  }
+  const nodes = json.data?.node?.fields?.nodes ?? [];
+  const field = nodes.find((f) => f?.name === fieldName && f?.dataType === 'NUMBER');
+  return field?.id ? { id: field.id } : null;
+}
+
+// Cria um campo numérico no project (usado na primeira gravação do Rank).
+export async function createNumberField(
+  config: GitHubConfig,
+  projectId: string,
+  fieldName: string,
+): Promise<{ id: string }> {
+  const query = `
+    mutation CreateNumberField($projectId: ID!, $name: String!) {
+      createProjectV2Field(input: { projectId: $projectId, dataType: NUMBER, name: $name }) {
+        projectV2Field { ... on ProjectV2Field { id } }
+      }
+    }`;
+  const res = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query, variables: { projectId, name: fieldName } }),
+  });
+  if (!res.ok) throw new UpstreamError(`GitHub API ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as {
+    errors?: { message: string }[];
+    data?: { createProjectV2Field?: { projectV2Field?: { id?: string } } };
+  };
+  if (json.errors) {
+    throw new UpstreamError(`GitHub GraphQL: ${json.errors.map((e) => e.message).join('; ')}`);
+  }
+  const id = json.data?.createProjectV2Field?.projectV2Field?.id;
+  if (!id) throw new UpstreamError('GitHub GraphQL: createProjectV2Field não retornou o id.');
+  return { id };
+}
+
+// Grava um valor numérico num item do project (updateProjectV2ItemFieldValue).
+export async function setProjectItemNumberValue(
+  config: GitHubConfig,
+  projectId: string,
+  itemId: string,
+  fieldId: string,
+  value: number,
+): Promise<void> {
+  const query = `
+    mutation SetNumberValue($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: Float!) {
+      updateProjectV2ItemFieldValue(input: {
+        projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+        value: { number: $value }
+      }) { projectV2Item { id } }
+    }`;
+  const res = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `bearer ${config.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query, variables: { projectId, itemId, fieldId, value } }),
   });
   if (!res.ok) throw new UpstreamError(`GitHub API ${res.status}: ${await res.text()}`);
   const json = (await res.json()) as { errors?: { message: string }[] };

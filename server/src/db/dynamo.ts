@@ -148,6 +148,10 @@ export interface RepositoryRecord {
   projectNumber?: number | null;
   etapaFieldId?: string | null;
   stageOptions?: Record<string, string> | null;
+  wipThreshold?: number | null; // WIP pessoal persuasivo do workspace Dev (default 2)
+  // Discussão integrada (Slack): bot token cifrado com KMS (contexto tenantId),
+  // como a chave OpenRouter do tenant. Prefixo "plain:" só em dev local sem KMS.
+  slackTokenCiphertext?: string | null;
 }
 
 const repoKey = (tenantId: string, repoId: string) => ({
@@ -447,6 +451,392 @@ export async function updateRefineJob(
   );
 }
 
+// ---------- Proposta de decomposição (Plan view do TL) ----------
+// Fase 1: job LLM produz a proposta editável; fase 2: materialização sequencial
+// idempotente via API (progresso persistido por item — issueNumber preenchido).
+
+export interface ProposalTask {
+  tempId: string;
+  title: string;
+  issueNumber?: number;
+}
+
+export interface ProposalStory {
+  tempId: string;
+  title: string;
+  userStory: string;
+  points: number;
+  origin: 'ai' | 'manual';
+  issueNumber?: number;
+  nodeId?: string; // node do GitHub (link das Tasks como sub-issues)
+  tasks: ProposalTask[];
+}
+
+export type ProposalStatus =
+  | 'pending'
+  | 'draft'
+  | 'invalidated'
+  | 'materializing'
+  | 'done'
+  | 'error';
+
+export interface DecompositionProposalRecord {
+  tenantId: string;
+  repoId: string;
+  issueNumber: number;
+  planSha: string | null;
+  status: ProposalStatus;
+  stories: ProposalStory[];
+  error?: string;
+  updatedAt: string; // ISO
+}
+
+const proposalKey = (t: { tenantId: string; repoId: string; issueNumber: number }) => ({
+  PK: `TENANT#${t.tenantId}`,
+  SK: `DECOMP#${t.repoId}#${t.issueNumber}`,
+});
+
+export async function putProposal(rec: DecompositionProposalRecord): Promise<void> {
+  await doc().send(new PutCommand({ TableName: TABLE, Item: { ...proposalKey(rec), ...rec } }));
+}
+
+export async function getProposal(
+  tenantId: string,
+  repoId: string,
+  issueNumber: number,
+): Promise<DecompositionProposalRecord | null> {
+  const res = await doc().send(
+    new GetCommand({ TableName: TABLE, Key: proposalKey({ tenantId, repoId, issueNumber }) }),
+  );
+  return (res.Item as DecompositionProposalRecord | undefined) ?? null;
+}
+
+// ---------- Revisão técnica do TL (rascunhos, ciclos e pré-review) ----------
+// Rascunhos de comentários (staged): NADA é postado na issue até a devolução.
+
+export interface ReviewDraftRecord {
+  tenantId: string;
+  repoId: string;
+  issueNumber: number;
+  draftId: string;
+  body: string;
+  anchor: unknown | null; // formato da âncora da Specification (§4.2)
+  specSha: string | null;
+  createdAt: string; // ISO
+}
+
+const reviewDraftKey = (t: { tenantId: string; repoId: string; issueNumber: number; draftId: string }) => ({
+  PK: `TENANT#${t.tenantId}`,
+  SK: `REVDRAFT#${t.repoId}#${t.issueNumber}#${t.draftId}`,
+});
+
+export async function putReviewDraft(rec: ReviewDraftRecord): Promise<void> {
+  await doc().send(
+    new PutCommand({ TableName: TABLE, Item: { ...reviewDraftKey(rec), ...rec } }),
+  );
+}
+
+export async function deleteReviewDraft(
+  tenantId: string,
+  repoId: string,
+  issueNumber: number,
+  draftId: string,
+): Promise<void> {
+  await doc().send(
+    new DeleteCommand({
+      TableName: TABLE,
+      Key: reviewDraftKey({ tenantId, repoId, issueNumber, draftId }),
+    }),
+  );
+}
+
+export async function queryReviewDrafts(
+  tenantId: string,
+  repoId: string,
+  issueNumber: number,
+): Promise<ReviewDraftRecord[]> {
+  const res = await doc().send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+      ExpressionAttributeValues: {
+        ':pk': `TENANT#${tenantId}`,
+        ':sk': `REVDRAFT#${repoId}#${issueNumber}#`,
+      },
+    }),
+  );
+  return (res.Items ?? []) as ReviewDraftRecord[];
+}
+
+// Ciclo de revisão: registrado na devolução ao PM (specSha revisado + comentários).
+export interface ReviewCycleRecord {
+  tenantId: string;
+  repoId: string;
+  issueNumber: number;
+  specSha: string | null;
+  returnedAt: string; // ISO
+  commentIds: number[]; // comentários publicados na issue neste ciclo
+}
+
+// Um ciclo por item (o último vence — a re-revisão olha o ciclo mais recente).
+const reviewCycleKey = (t: { tenantId: string; repoId: string; issueNumber: number }) => ({
+  PK: `TENANT#${t.tenantId}`,
+  SK: `REVCYCLE#${t.repoId}#${t.issueNumber}`,
+});
+
+export async function putReviewCycle(rec: ReviewCycleRecord): Promise<void> {
+  await doc().send(
+    new PutCommand({ TableName: TABLE, Item: { ...reviewCycleKey(rec), ...rec } }),
+  );
+}
+
+export async function getReviewCycle(
+  tenantId: string,
+  repoId: string,
+  issueNumber: number,
+): Promise<ReviewCycleRecord | null> {
+  const res = await doc().send(
+    new GetCommand({ TableName: TABLE, Key: reviewCycleKey({ tenantId, repoId, issueNumber }) }),
+  );
+  return (res.Item as ReviewCycleRecord | undefined) ?? null;
+}
+
+// Pré-review por IA: achados por item (uma execução automática; manual substitui).
+export interface PreReviewFinding {
+  text: string;
+  anchor: unknown | null;
+  severity: 'info' | 'warning';
+}
+
+export interface PreReviewRecord {
+  tenantId: string;
+  repoId: string;
+  issueNumber: number;
+  status: 'pending' | 'done' | 'error';
+  specSha: string | null;
+  findings: PreReviewFinding[];
+  error?: string;
+  updatedAt: string; // ISO
+}
+
+const preReviewKey = (t: { tenantId: string; repoId: string; issueNumber: number }) => ({
+  PK: `TENANT#${t.tenantId}`,
+  SK: `PREREVIEW#${t.repoId}#${t.issueNumber}`,
+});
+
+export async function putPreReview(rec: PreReviewRecord): Promise<void> {
+  await doc().send(new PutCommand({ TableName: TABLE, Item: { ...preReviewKey(rec), ...rec } }));
+}
+
+export async function getPreReview(
+  tenantId: string,
+  repoId: string,
+  issueNumber: number,
+): Promise<PreReviewRecord | null> {
+  const res = await doc().send(
+    new GetCommand({ TableName: TABLE, Key: preReviewKey({ tenantId, repoId, issueNumber }) }),
+  );
+  return (res.Item as PreReviewRecord | undefined) ?? null;
+}
+
+// ---------- Metadados da estimativa por IA (tela Planning) ----------
+// O VALOR fica no campo numérico "Estimate" do Projects v2 (sem lock-in); aqui
+// vive só a origem (ai|manual), a versão da spec usada e o marcador de spec
+// desatualizada (origem manual não é reestimada — só sinalizada).
+
+export type EstimateOrigin = 'ai' | 'manual';
+
+export interface EstimateMetaRecord {
+  tenantId: string;
+  repoId: string;
+  issueNumber: number;
+  origin: EstimateOrigin;
+  specSha: string | null; // commit da spec usado na estimativa
+  stale: boolean; // spec mudou depois de uma estimativa manual
+  updatedAt: string; // ISO
+}
+
+const estimateMetaKey = (t: { tenantId: string; repoId: string; issueNumber: number }) => ({
+  PK: `TENANT#${t.tenantId}`,
+  SK: `ESTMETA#${t.repoId}#${t.issueNumber}`,
+});
+
+export async function putEstimateMeta(rec: EstimateMetaRecord): Promise<void> {
+  await doc().send(
+    new PutCommand({ TableName: TABLE, Item: { ...estimateMetaKey(rec), ...rec } }),
+  );
+}
+
+export async function getEstimateMeta(
+  tenantId: string,
+  repoId: string,
+  issueNumber: number,
+): Promise<EstimateMetaRecord | null> {
+  const res = await doc().send(
+    new GetCommand({ TableName: TABLE, Key: estimateMetaKey({ tenantId, repoId, issueNumber }) }),
+  );
+  return (res.Item as EstimateMetaRecord | undefined) ?? null;
+}
+
+export async function queryEstimateMeta(
+  tenantId: string,
+  repoId: string,
+): Promise<EstimateMetaRecord[]> {
+  const res = await doc().send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+      ExpressionAttributeValues: {
+        ':pk': `TENANT#${tenantId}`,
+        ':sk': `ESTMETA#${repoId}#`,
+      },
+    }),
+  );
+  return (res.Items ?? []) as EstimateMetaRecord[];
+}
+
+// ---------- Transições de etapa (tempo na etapa — Prioritization etc.) ----------
+// Um registro por item+etapa com o momento da ENTRADA (reentrada sobrescreve).
+// Gravado por toda mutação de etapa que passa pelo backend; itens movidos por
+// fora da UI recebem um registro aproximado na reconciliação (approximate).
+
+// Origem de uma transição: ato humano na UI (manual) ou movimento aplicado pela
+// automação de eventos de PR (workspace Dev). Registros antigos não têm o campo.
+export type StageOrigin = 'manual' | 'automation';
+
+export interface StageEntryRecord {
+  tenantId: string;
+  repoId: string;
+  stage: string; // StageName canônico
+  issueNumber: number;
+  at: string; // ISO — momento da entrada na etapa
+  approximate: boolean;
+  origin?: StageOrigin;
+  sub?: string | null; // autor da transição (null em origin: automation)
+}
+
+const stageEntryKey = (t: {
+  tenantId: string;
+  repoId: string;
+  stage: string;
+  issueNumber: number;
+}) => ({
+  PK: `TENANT#${t.tenantId}`,
+  SK: `STAGEAT#${t.repoId}#${t.stage}#${t.issueNumber}`,
+});
+
+export async function putStageEntry(rec: StageEntryRecord): Promise<void> {
+  await doc().send(
+    new PutCommand({ TableName: TABLE, Item: { ...stageEntryKey(rec), ...rec } }),
+  );
+}
+
+export async function queryStageEntries(
+  tenantId: string,
+  repoId: string,
+  stage: string,
+): Promise<StageEntryRecord[]> {
+  const res = await doc().send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+      ExpressionAttributeValues: {
+        ':pk': `TENANT#${tenantId}`,
+        ':sk': `STAGEAT#${repoId}#${stage}#`,
+      },
+    }),
+  );
+  return (res.Items ?? []) as StageEntryRecord[];
+}
+
+// ---------- Última transição por item (automação do workspace Dev) ----------
+// Um registro por item com a transição MAIS RECENTE (etapa/quando/origem). A
+// automação de eventos de PR consulta isto para nunca desfazer um movimento
+// manual mais recente que a evidência de PR.
+
+export interface StageLastRecord {
+  tenantId: string;
+  repoId: string;
+  issueNumber: number;
+  stage: string; // StageName canônico da última transição
+  at: string; // ISO
+  origin: StageOrigin;
+  sub?: string | null; // autor (null em origin: automation)
+}
+
+const stageLastKey = (t: { tenantId: string; repoId: string; issueNumber: number }) => ({
+  PK: `TENANT#${t.tenantId}`,
+  SK: `STAGELAST#${t.repoId}#${t.issueNumber}`,
+});
+
+export async function putStageLast(rec: StageLastRecord): Promise<void> {
+  await doc().send(
+    new PutCommand({ TableName: TABLE, Item: { ...stageLastKey(rec), ...rec } }),
+  );
+}
+
+export async function queryStageLast(
+  tenantId: string,
+  repoId: string,
+): Promise<StageLastRecord[]> {
+  const res = await doc().send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+      ExpressionAttributeValues: {
+        ':pk': `TENANT#${tenantId}`,
+        ':sk': `STAGELAST#${repoId}#`,
+      },
+    }),
+  );
+  return (res.Items ?? []) as StageLastRecord[];
+}
+
+// ---------- Triagem de comentários de revisão de spec (tela Specification) ----------
+// Estado da triagem (aceito/descartado/aplicado) por comentário do GitHub. A
+// issue NÃO é alterada pela triagem — só por réplicas explícitas.
+
+export type SpecTriageState = 'pending' | 'accepted' | 'dismissed' | 'applied';
+
+export interface SpecTriageRecord {
+  tenantId: string;
+  repoId: string;
+  issueNumber: number;
+  commentId: number;
+  state: SpecTriageState;
+  instruction?: string; // instrução editada pelo PM (default: corpo do comentário)
+  updatedAt: string; // ISO
+}
+
+const specTriageKey = (t: SpecTriageRecord | { tenantId: string; repoId: string; issueNumber: number; commentId: number }) => ({
+  PK: `TENANT#${t.tenantId}`,
+  SK: `SPECTRIAGE#${t.repoId}#${t.issueNumber}#${t.commentId}`,
+});
+
+export async function putSpecTriage(rec: SpecTriageRecord): Promise<void> {
+  await doc().send(
+    new PutCommand({ TableName: TABLE, Item: { ...specTriageKey(rec), ...rec } }),
+  );
+}
+
+export async function querySpecTriage(
+  tenantId: string,
+  repoId: string,
+  issueNumber: number,
+): Promise<SpecTriageRecord[]> {
+  const res = await doc().send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+      ExpressionAttributeValues: {
+        ':pk': `TENANT#${tenantId}`,
+        ':sk': `SPECTRIAGE#${repoId}#${issueNumber}#`,
+      },
+    }),
+  );
+  return (res.Items ?? []) as SpecTriageRecord[];
+}
+
 // TTL do Dynamo é eventual — reforça a expiração na leitura (como consumeState).
 export async function getRefineJob(tenantId: string, jobId: string): Promise<RefineJobRecord | null> {
   const out = await doc().send(
@@ -492,6 +882,231 @@ export async function listMembers(tenantId: string): Promise<MemberRecord[]> {
     }),
   );
   return (out.Items ?? []) as MemberRecord[];
+}
+
+// ---------- Preferências por usuário (workspace Dev) ----------
+// A sessão autentica um usuário Cognito (sub); o "eu" do workspace do Developer
+// é um login do GitHub. O vínculo é uma preferência por usuário do tenant.
+
+export interface UserPrefRecord {
+  tenantId: string;
+  sub: string;
+  githubLogin: string | null;
+  slackUserId?: string | null; // member ID no Slack (convite ao canal de discussão)
+  updatedAt: string; // ISO
+}
+
+const userPrefKey = (tenantId: string, sub: string) => ({
+  PK: `TENANT#${tenantId}`,
+  SK: `USERPREF#${sub}`,
+});
+
+export async function putUserPref(rec: UserPrefRecord): Promise<void> {
+  await doc().send(
+    new PutCommand({ TableName: TABLE, Item: { ...userPrefKey(rec.tenantId, rec.sub), ...rec } }),
+  );
+}
+
+export async function getUserPref(
+  tenantId: string,
+  sub: string,
+): Promise<UserPrefRecord | null> {
+  const out = await doc().send(
+    new GetCommand({ TableName: TABLE, Key: userPrefKey(tenantId, sub) }),
+  );
+  return (out.Item as UserPrefRecord | undefined) ?? null;
+}
+
+// ---------- Papéis de acesso (usuário × repositório) ----------
+// Papéis de TRABALHO (pm/tech/dev) por membro e repositório — a materialização
+// das validações "papel X (UI + backend)" das specs. O root (= owner do tenant)
+// administra; múltiplos papéis por repositório são comuns (TL que desenvolve).
+
+export interface MemberRolesRecord {
+  tenantId: string;
+  sub: string;
+  repoId: string;
+  roles: string[]; // 'pm' | 'tech' | 'dev'
+  updatedAt: string; // ISO
+  updatedBy: string; // sub de quem concedeu
+}
+
+const memberRolesKey = (tenantId: string, sub: string, repoId: string) => ({
+  PK: `TENANT#${tenantId}`,
+  SK: `MEMBERROLE#${sub}#${repoId}`,
+});
+
+export async function putMemberRoles(rec: MemberRolesRecord): Promise<void> {
+  if (rec.roles.length === 0) {
+    await doc().send(
+      new DeleteCommand({ TableName: TABLE, Key: memberRolesKey(rec.tenantId, rec.sub, rec.repoId) }),
+    );
+    return;
+  }
+  await doc().send(
+    new PutCommand({
+      TableName: TABLE,
+      Item: { ...memberRolesKey(rec.tenantId, rec.sub, rec.repoId), ...rec },
+    }),
+  );
+}
+
+export async function getMemberRoles(
+  tenantId: string,
+  sub: string,
+  repoId: string,
+): Promise<MemberRolesRecord | null> {
+  const out = await doc().send(
+    new GetCommand({ TableName: TABLE, Key: memberRolesKey(tenantId, sub, repoId) }),
+  );
+  return (out.Item as MemberRolesRecord | undefined) ?? null;
+}
+
+// Todas as atribuições do tenant (matriz do admin) ou de um membro (/api/me).
+export async function queryMemberRoles(
+  tenantId: string,
+  sub?: string,
+): Promise<MemberRolesRecord[]> {
+  const res = await doc().send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+      ExpressionAttributeValues: {
+        ':pk': `TENANT#${tenantId}`,
+        ':sk': sub ? `MEMBERROLE#${sub}#` : 'MEMBERROLE#',
+      },
+    }),
+  );
+  return (res.Items ?? []) as MemberRolesRecord[];
+}
+
+// ---------- Auditoria administrativa ----------
+// Mutações de administração (papéis concedidos/revogados, repositórios) — um
+// registro por ato, chaveado por timestamp (leitura futura por período).
+
+export interface AuditLogRecord {
+  tenantId: string;
+  at: string; // ISO
+  sub: string; // autor
+  action: string; // ex.: 'roles.set', 'repository.create'
+  target: string; // ex.: 'sub#repoId', repoId
+  detail?: string;
+}
+
+export async function putAuditLog(rec: AuditLogRecord): Promise<void> {
+  await doc().send(
+    new PutCommand({
+      TableName: TABLE,
+      Item: { PK: `TENANT#${rec.tenantId}`, SK: `AUDIT#${rec.at}#${rec.action}`, ...rec },
+    }),
+  );
+}
+
+// ---------- Discussão integrada (canais de chat por Feature) ----------
+// Um canal por Feature (spec "Discussão integrada" §2). A unicidade da chave
+// resolve a corrida de criação: o segundo clique simultâneo falha no condition
+// e recebe o canal do primeiro. Citações têm dedupe por comentário.
+
+export interface DiscussionChannelRecord {
+  tenantId: string;
+  repoId: string;
+  itemNumber: number;
+  provider: 'slack';
+  channelId: string;
+  channelName: string;
+  createdBy: string; // sub do usuário criador
+  createdAt: string; // ISO
+  archivedAt: string | null;
+  openingPosted: boolean; // §4.1 passo 3 (retomável)
+  tracePosted: boolean; // §4.1 passo 4 (comentário na issue, uma vez por canal)
+}
+
+const discussionChannelKey = (t: { tenantId: string; repoId: string; itemNumber: number }) => ({
+  PK: `TENANT#${t.tenantId}`,
+  SK: `DISCCHAN#${t.repoId}#${t.itemNumber}`,
+});
+
+// Grava o mapeamento SOMENTE se ainda não existe. false = perdeu a corrida.
+export async function putDiscussionChannelIfAbsent(
+  rec: DiscussionChannelRecord,
+): Promise<boolean> {
+  try {
+    await doc().send(
+      new PutCommand({
+        TableName: TABLE,
+        Item: { ...discussionChannelKey(rec), ...rec },
+        ConditionExpression: 'attribute_not_exists(SK)',
+      }),
+    );
+    return true;
+  } catch (err) {
+    if ((err as { name?: string }).name === 'ConditionalCheckFailedException') return false;
+    throw err;
+  }
+}
+
+export async function putDiscussionChannel(rec: DiscussionChannelRecord): Promise<void> {
+  await doc().send(
+    new PutCommand({ TableName: TABLE, Item: { ...discussionChannelKey(rec), ...rec } }),
+  );
+}
+
+export async function getDiscussionChannel(
+  tenantId: string,
+  repoId: string,
+  itemNumber: number,
+): Promise<DiscussionChannelRecord | null> {
+  const out = await doc().send(
+    new GetCommand({ TableName: TABLE, Key: discussionChannelKey({ tenantId, repoId, itemNumber }) }),
+  );
+  return (out.Item as DiscussionChannelRecord | undefined) ?? null;
+}
+
+export async function queryDiscussionChannels(
+  tenantId: string,
+  repoId: string,
+): Promise<DiscussionChannelRecord[]> {
+  const res = await doc().send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+      ExpressionAttributeValues: {
+        ':pk': `TENANT#${tenantId}`,
+        ':sk': `DISCCHAN#${repoId}#`,
+      },
+    }),
+  );
+  return (res.Items ?? []) as DiscussionChannelRecord[];
+}
+
+export interface DiscussionCitationRecord {
+  tenantId: string;
+  channelId: string;
+  commentId: number;
+  postedAt: string; // ISO
+}
+
+// Dedupe de citação: true = primeira vez (pode postar); false = já citado.
+export async function putDiscussionCitationIfAbsent(
+  rec: DiscussionCitationRecord,
+): Promise<boolean> {
+  try {
+    await doc().send(
+      new PutCommand({
+        TableName: TABLE,
+        Item: {
+          PK: `TENANT#${rec.tenantId}`,
+          SK: `DISCCITE#${rec.channelId}#${rec.commentId}`,
+          ...rec,
+        },
+        ConditionExpression: 'attribute_not_exists(SK)',
+      }),
+    );
+    return true;
+  } catch (err) {
+    if ((err as { name?: string }).name === 'ConditionalCheckFailedException') return false;
+    throw err;
+  }
 }
 
 // ---------- Convites (fase 3) ----------

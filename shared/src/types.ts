@@ -26,6 +26,8 @@ export interface Repository {
   url: string;
   createdAt: string; // ISO 8601
   projectUrl?: string | null; // Projects v2 vinculado (para mover etapas); null = não configurado
+  wipThreshold?: number | null; // WIP pessoal persuasivo do workspace Dev; null = default (2)
+  slackConfigured?: boolean; // discussão integrada: bot do Slack configurado (token nunca exposto)
 }
 
 // Criação de um repositório conectado. POST /api/repositories.
@@ -41,6 +43,8 @@ export interface CreateRepositoryRequest {
 export interface UpdateRepositoryRequest {
   url?: string;
   projectUrl?: string;
+  wipThreshold?: number | null; // limiar do WIP persuasivo do dev (null = volta ao default 2)
+  slackBotToken?: string; // write-only: bot token do Slack ('' remove a integração)
 }
 
 // Criação de uma Feature sob um Épico. POST /api/repositories/:id/workitems/epic/:number/features.
@@ -199,6 +203,7 @@ export interface WorkItemView {
   planApproved?: boolean; // só Feature: true se label spec-wave:plan-approved presente
   devStatus?: Status; // só Story: status do board normalizado (todo/prog/done)
   devAgentRequested?: boolean; // só Story: true se label spec-wave:dev-agent presente
+  devStage?: string | null; // só Story: nome da etapa do board ("Etapa"); a CTA de dev só aparece na etapa Desenvolvimento
   headerPct: number; // % grande do painel de progresso
   progressLabel: string; // "Progresso do épico" / "da feature" / "da story"
   childrenLabel: string; // "Features" | "Stories" | "Tasks"
@@ -246,6 +251,7 @@ export type WorkspaceRole = 'pm' | 'tech' | 'dev';
 // normaliza o nome cru para este enum ao montar o snapshot.
 export type StageName =
   | 'Backlog'
+  | 'Priorizado'
   | 'Spec'
   | 'Plan'
   | 'Ready'
@@ -257,6 +263,7 @@ export type StageName =
 
 export const STAGE_NAMES: StageName[] = [
   'Backlog',
+  'Priorizado',
   'Spec',
   'Plan',
   'Ready',
@@ -279,6 +286,7 @@ export interface MilestoneSummary {
   state: 'open' | 'closed';
   openCount: number;
   closedCount: number;
+  description: string | null; // corpo do milestone; guarda metadados (início/capacidade) do planner
 }
 
 // PR vinculado a uma issue via closing reference ("closes #n").
@@ -308,10 +316,14 @@ export interface SnapshotItem {
   area: string | null;
   stage: StageName | null; // normalizado; null = fora do board e issue aberta
   stageRaw: string | null; // nome cru da opção no board (ex.: "📋 Spec")
+  points: number | null; // campo "Story Points" do Project (single-select); null = sem estimativa
+  rank: number | null; // campo numérico "Rank" do Project (ordem da Prioritization); null = sem rank
+  estimate: number | null; // campo numérico "Estimate" do Project (estimativa por IA/manual); null = sem estimativa
   milestone: { number: number; title: string } | null;
   assignees: { login: string; name: string | null }[];
   parentNumber: number | null;
   createdAt: string; // ISO
+  closedAt: string | null; // ISO; null = aberta (métrica de entregas D4 do Dashboard)
   progress: { total: number; completed: number } | null; // subIssuesSummary
   prs: PullRequestRef[];
 }

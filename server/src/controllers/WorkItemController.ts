@@ -15,17 +15,25 @@ import type {
 } from '@spec-flow/shared';
 import { STAGE_NAMES, WORK_ITEM_TYPES } from '@spec-flow/shared';
 import {
+  archiveWorkItemSubtreeForRepository,
+  bulkArchiveForRepository,
+  bulkPrioritizeForRepository,
+  bulkReparentForRepository,
   createFeatureForRepository,
   createWorkItemForRepository,
   deleteWorkItemForRepository,
   loadWorkItemForRepository,
+  prioritizeWorkItemForRepository,
   setPriorityForRepository,
+  setRankForRepository,
   setStageForRepository,
   setWorkItemParentForRepository,
+  stageAgesForRepository,
   startDevelopmentForRepository,
   updateWorkItemForRepository,
 } from '../services/workItemService.ts';
 import { setDisplayOrderForRepository } from '../services/snapshotService.ts';
+import { listEstimateMeta, setManualEstimate } from '../services/estimateService.ts';
 import { HttpError } from '../lib/errors.ts';
 import { isValidRepoId } from '../lib/validation.ts';
 import { tenantOf } from '../middleware/auth.ts';
@@ -206,6 +214,263 @@ export async function deleteRepositoryWorkItem(
       res.status(err.status).json({ error: err.message });
       return;
     }
+    next(err);
+  }
+}
+
+// POST /api/repositories/:id/workitems/:level/:number/archive → arquiva (fecha)
+// o item e todos os descendentes. O `:level` é só decorativo (Initiative não é
+// um Level válido), então validamos apenas repo + número.
+export async function archiveRepositoryWorkItem(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const { id, number } = req.params;
+  if (!isValidRepoId(id)) {
+    res.status(400).json({ error: `Repositório inválido: "${id}".` });
+    return;
+  }
+  const n = Number(number);
+  if (!Number.isInteger(n) || n <= 0) {
+    res.status(400).json({ error: `Número inválido: "${number}".` });
+    return;
+  }
+
+  try {
+    const result = await archiveWorkItemSubtreeForRepository(tenantOf(req).tenantId, id, n);
+    res.json(result);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    next(err);
+  }
+}
+
+// ---- Backlog do PM: priorização + operações em lote ----
+
+function repoIdParamOr400(req: Request, res: Response): string | null {
+  const { id } = req.params;
+  if (!isValidRepoId(id)) {
+    res.status(400).json({ error: `Repositório inválido: "${id}".` });
+    return null;
+  }
+  return id;
+}
+
+function priorityOr400(res: Response, value: unknown): Priority | null {
+  if (!PRIORITIES.includes(value as Priority)) {
+    res.status(400).json({ error: `Prioridade inválida. Use uma de: ${PRIORITIES.join(', ')}.` });
+    return null;
+  }
+  return value as Priority;
+}
+
+function numbersOr400(res: Response, value: unknown): number[] | null {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    !value.every((n) => Number.isInteger(n) && n > 0)
+  ) {
+    res.status(400).json({ error: 'numbers deve ser uma lista de números de issue (> 0).' });
+    return null;
+  }
+  return value as number[];
+}
+
+// POST /api/repositories/:id/workitems/:level/:number/prioritize — { priority }.
+// Grava prioridade + move a Etapa (Feature → Priorizado; Spike → Ready) + Rank.
+// O `:level` é decorativo (Spike não é um Level); valida repo + número.
+export async function prioritizeRepositoryWorkItem(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const id = repoIdParamOr400(req, res);
+  if (!id) return;
+  const n = Number(req.params.number);
+  if (!Number.isInteger(n) || n <= 0) {
+    res.status(400).json({ error: `Número inválido: "${req.params.number}".` });
+    return;
+  }
+  const priority = priorityOr400(res, ((req.body ?? {}) as Record<string, unknown>).priority);
+  if (!priority) return;
+
+  try {
+    await prioritizeWorkItemForRepository(tenantOf(req).tenantId, id, n, priority);
+    res.status(204).end();
+  } catch (err) {
+    if (err instanceof HttpError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    next(err);
+  }
+}
+
+// POST /api/repositories/:id/workitems/bulk/prioritize — { numbers, priority }.
+export async function bulkPrioritizeWorkItems(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const id = repoIdParamOr400(req, res);
+  if (!id) return;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const numbers = numbersOr400(res, body.numbers);
+  if (!numbers) return;
+  const priority = priorityOr400(res, body.priority);
+  if (!priority) return;
+
+  try {
+    res.json({ results: await bulkPrioritizeForRepository(tenantOf(req).tenantId, id, numbers, priority) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// POST /api/repositories/:id/workitems/bulk/reparent — { numbers, parentNumber }.
+export async function bulkReparentWorkItems(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const id = repoIdParamOr400(req, res);
+  if (!id) return;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const numbers = numbersOr400(res, body.numbers);
+  if (!numbers) return;
+  const parentNumber = Number(body.parentNumber);
+  if (!Number.isInteger(parentNumber) || parentNumber <= 0) {
+    res.status(400).json({ error: `parentNumber inválido: "${String(body.parentNumber)}".` });
+    return;
+  }
+
+  try {
+    res.json({
+      results: await bulkReparentForRepository(tenantOf(req).tenantId, id, numbers, parentNumber),
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// PATCH /api/repositories/:id/workitems/:level/:number/rank — { rank: number }.
+// Persistência do drag de reordenação da Prioritization.
+export async function patchWorkItemRank(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const id = repoIdParamOr400(req, res);
+  if (!id) return;
+  const n = Number(req.params.number);
+  if (!Number.isInteger(n) || n <= 0) {
+    res.status(400).json({ error: `Número inválido: "${req.params.number}".` });
+    return;
+  }
+  const rank = Number(((req.body ?? {}) as Record<string, unknown>).rank);
+  if (!Number.isFinite(rank)) {
+    res.status(400).json({ error: 'rank deve ser um número.' });
+    return;
+  }
+
+  try {
+    await setRankForRepository(tenantOf(req).tenantId, id, n, rank);
+    res.status(204).end();
+  } catch (err) {
+    if (err instanceof HttpError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    next(err);
+  }
+}
+
+// PATCH /api/repositories/:id/workitems/feature/:number/estimate — { points }.
+// Override manual da estimativa (origem manual; não é sobrescrita pela IA).
+export async function patchFeatureEstimate(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const id = repoIdParamOr400(req, res);
+  if (!id) return;
+  const n = Number(req.params.number);
+  if (!Number.isInteger(n) || n <= 0) {
+    res.status(400).json({ error: `Número inválido: "${req.params.number}".` });
+    return;
+  }
+  const points = Number(((req.body ?? {}) as Record<string, unknown>).points);
+  if (!Number.isFinite(points) || points < 0) {
+    res.status(400).json({ error: 'points deve ser um número ≥ 0.' });
+    return;
+  }
+
+  try {
+    await setManualEstimate(tenantOf(req).tenantId, id, n, points);
+    res.status(204).end();
+  } catch (err) {
+    if (err instanceof HttpError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    next(err);
+  }
+}
+
+// GET /api/repositories/:id/estimates-meta → { estimates: [{issueNumber, origin, stale}] }
+export async function getEstimatesMeta(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const id = repoIdParamOr400(req, res);
+  if (!id) return;
+  try {
+    res.json({ estimates: await listEstimateMeta(tenantOf(req).tenantId, id) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// GET /api/repositories/:id/stage-ages?stage=Priorizado → { ages: [{number, at, approximate}] }
+export async function getStageAges(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const id = repoIdParamOr400(req, res);
+  if (!id) return;
+  const stage = req.query.stage;
+  if (typeof stage !== 'string' || !STAGE_NAMES.includes(stage as StageName)) {
+    res.status(400).json({ error: `stage inválida. Use uma de: ${STAGE_NAMES.join(', ')}.` });
+    return;
+  }
+
+  try {
+    res.json({ ages: await stageAgesForRepository(tenantOf(req).tenantId, id, stage as StageName) });
+  } catch (err) {
+    if (err instanceof HttpError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    next(err);
+  }
+}
+
+// POST /api/repositories/:id/workitems/bulk/archive — { numbers } (individual, sem cascata).
+export async function bulkArchiveWorkItems(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const id = repoIdParamOr400(req, res);
+  if (!id) return;
+  const numbers = numbersOr400(res, ((req.body ?? {}) as Record<string, unknown>).numbers);
+  if (!numbers) return;
+
+  try {
+    res.json({ results: await bulkArchiveForRepository(tenantOf(req).tenantId, id, numbers) });
+  } catch (err) {
     next(err);
   }
 }

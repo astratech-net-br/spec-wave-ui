@@ -13,6 +13,7 @@ import type { ArtifactKind, WorkItemView } from '@spec-flow/shared';
 import {
   addLabel,
   createComment,
+  removeLabel,
   fetchFileContent,
   fetchIssueTitle,
   fetchProjectItemId,
@@ -24,12 +25,14 @@ import { generateArtifact } from '../llm/openrouter.ts';
 import { logger } from '../lib/logger.ts';
 import { emitMetric } from '../lib/metrics.ts';
 import { invalidateSnapshot } from '../lib/snapshotCache.ts';
-import { getRefineJob, putRefineJob, updateRefineJob } from '../db/dynamo.ts';
+import { getRefineJob, putRefineJob, putStageEntry, updateRefineJob } from '../db/dynamo.ts';
 import { invokeAsync } from '../lib/lambdaInvoke.ts';
 import { consumeRefineOrThrow } from './quotaService.ts';
 import { tenantOpenrouterKey } from './settingsService.ts';
 import { configForRepository, getRepositoryOr404 } from './repositoryService.ts';
 import { loadWorkItem, resolveFeaturePaths } from './workItemService.ts';
+import { onSpecSaved } from './estimateService.ts';
+import { onPlanSaved } from './decompositionService.ts';
 
 // Nome do label do spec-wave que dispara a Action de geração do artefato.
 const LABEL: Record<ArtifactKind, string> = {
@@ -95,6 +98,15 @@ export async function createArtifact(
   const config = await configForRepository(await getRepositoryOr404(tenantId, id));
   await addLabel(config, number, LABEL[kind]);
   await moveStage(config, number, kind);
+  // Registra a entrada na etapa (tempo-na-etapa das telas do PM). Best-effort.
+  putStageEntry({
+    tenantId,
+    repoId: id,
+    stage: kind === 'spec' ? 'Spec' : 'Plan',
+    issueNumber: number,
+    at: new Date().toISOString(),
+    approximate: false,
+  }).catch(() => undefined);
   invalidateSnapshot(tenantId, id); // label + etapa mudaram → workspaces releem
   return loadWorkItem(config, 'feature', number);
 }
@@ -234,5 +246,15 @@ export async function saveArtifact(
   const config = await configForRepository(await getRepositoryOr404(tenantId, id));
   const path = await pathFor(config, number, kind);
   await putFileContent(config, path, content, `docs(${kind}): atualiza ${path} via UI`);
+  // Spec mudou: reestima (origem ai) ou marca stale (origem manual). Fire-and-forget.
+  if (kind === 'spec') onSpecSaved(tenantId, id, number);
+  // Plan mudou: um plano aprovado não pode divergir do validado — remove o
+  // spec-wave:ready (volta a "Plan em revisão") e invalida proposta em rascunho.
+  if (kind === 'plan') {
+    await removeLabel(config, number, READY_LABEL).catch((err: Error) =>
+      logger.warn(`Falha ao remover ${READY_LABEL} de #${number}: ${err.message}`),
+    );
+    onPlanSaved(tenantId, id, number);
+  }
   return loadWorkItem(config, 'feature', number);
 }

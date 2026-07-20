@@ -21,6 +21,7 @@ import {
   addProjectItem,
   addSubIssue,
   createIssue,
+  createNumberField,
   setSubIssueParent,
   fetchEpicPayload,
   fetchEpicSummaries,
@@ -29,10 +30,12 @@ import {
   fetchIssueRef,
   fetchIssueTitle,
   fetchIssueTree,
+  fetchNumberField,
   fetchProjectItemId,
   fetchSingleSelectField,
   moveProjectStage,
   removeLabel,
+  setProjectItemNumberValue,
   updateIssue,
   updateIssueState,
   type GitHubConfig,
@@ -41,6 +44,14 @@ import { logger } from '../lib/logger.ts';
 import { HttpError } from '../lib/errors.ts';
 import { normalizeStage } from '../lib/status.ts';
 import { invalidateSnapshot } from '../lib/snapshotCache.ts';
+import { requestContext } from '../lib/requestContext.ts';
+import { loadSnapshotForRepository } from './snapshotService.ts';
+import {
+  putStageEntry,
+  putStageLast,
+  queryStageEntries,
+  type StageOrigin,
+} from '../db/dynamo.ts';
 import {
   adaptEpic,
   adaptFeature,
@@ -478,6 +489,137 @@ export async function setPriorityForRepository(
   invalidateSnapshot(tenantId, id);
 }
 
+// Campo numérico do board onde o Backlog grava o rank inicial de priorização.
+const RANK_FIELD = 'Rank';
+
+// Priorização do Backlog (spec da tela): grava a prioridade (labels + board),
+// move a Etapa — Feature → 🎯 Priorizado, Spike → ✅ Ready (backlog técnico) —
+// e registra um Rank inicial. O Rank usa Date.now(): cresce monotonicamente,
+// então o item entra no FINAL do grupo da prioridade sem precisar ler os ranks
+// existentes (o reordenamento fino acontece na view Prioritization).
+export async function prioritizeWorkItemForRepository(
+  tenantId: string,
+  id: string,
+  number: number,
+  priority: Priority,
+): Promise<void> {
+  const config = await configForRepository(await getRepositoryOr404(tenantId, id));
+
+  const ref = await fetchIssueRef(config, number);
+  const type = typeFromTitle(ref.title);
+  if (type !== 'feature' && type !== 'spike') {
+    throw new HttpError(
+      422,
+      `A issue #${number} não é Feature nem Spike — o Backlog só prioriza esses tipos.`,
+    );
+  }
+
+  await setPriorityForRepository(tenantId, id, number, priority);
+  await setStageForRepository(tenantId, id, number, type === 'spike' ? 'Ready' : 'Priorizado');
+
+  // Rank inicial (best-effort): garante o campo numérico e grava o timestamp.
+  if (config.project) {
+    try {
+      const itemId = await fetchProjectItemId(config, number, config.project.projectId);
+      if (itemId) {
+        const field =
+          (await fetchNumberField(config, config.project.projectId, RANK_FIELD)) ??
+          (await createNumberField(config, config.project.projectId, RANK_FIELD));
+        await setProjectItemNumberValue(
+          config,
+          config.project.projectId,
+          itemId,
+          field.id,
+          Date.now(),
+        );
+      }
+    } catch (err) {
+      logger.warn(`Issue #${number}: priorizada, mas falhou ao gravar o Rank: ${(err as Error).message}`);
+    }
+  }
+
+  invalidateSnapshot(tenantId, id);
+}
+
+// Grava o Rank (campo numérico do board) de um item — drag de reordenação da
+// Prioritization. Garante o campo na primeira gravação.
+export async function setRankForRepository(
+  tenantId: string,
+  id: string,
+  number: number,
+  rank: number,
+): Promise<void> {
+  const config = await configForRepository(await getRepositoryOr404(tenantId, id));
+  if (!config.project) {
+    throw new HttpError(409, 'Este repositório não tem um Projects v2 vinculado.');
+  }
+  const itemId = await fetchProjectItemId(config, number, config.project.projectId);
+  if (!itemId) {
+    throw new HttpError(422, `A issue #${number} não está no board deste repositório.`);
+  }
+  const field =
+    (await fetchNumberField(config, config.project.projectId, RANK_FIELD)) ??
+    (await createNumberField(config, config.project.projectId, RANK_FIELD));
+  await setProjectItemNumberValue(config, config.project.projectId, itemId, field.id, rank);
+  invalidateSnapshot(tenantId, id);
+}
+
+// Resultado por item das operações em lote do Backlog.
+export interface BulkResult {
+  number: number;
+  ok: boolean;
+  error?: string;
+}
+
+async function runBulk(
+  numbers: number[],
+  op: (n: number) => Promise<void>,
+): Promise<BulkResult[]> {
+  const results: BulkResult[] = [];
+  for (const n of numbers) {
+    try {
+      await op(n);
+      results.push({ number: n, ok: true });
+    } catch (err) {
+      results.push({ number: n, ok: false, error: (err as Error).message });
+    }
+  }
+  return results;
+}
+
+// Prioriza vários itens (sequencial; resposta por item — falha parcial possível).
+export async function bulkPrioritizeForRepository(
+  tenantId: string,
+  id: string,
+  numbers: number[],
+  priority: Priority,
+): Promise<BulkResult[]> {
+  return runBulk(numbers, (n) => prioritizeWorkItemForRepository(tenantId, id, n, priority));
+}
+
+// Move vários itens para um novo épico-pai (sequencial; resposta por item).
+export async function bulkReparentForRepository(
+  tenantId: string,
+  id: string,
+  numbers: number[],
+  parentNumber: number,
+): Promise<BulkResult[]> {
+  return runBulk(numbers, (n) => setWorkItemParentForRepository(tenantId, id, n, parentNumber));
+}
+
+// Arquiva (fecha) vários itens individualmente — sem cascata (itens do Backlog
+// não têm filhos). Sequencial; resposta por item.
+export async function bulkArchiveForRepository(
+  tenantId: string,
+  id: string,
+  numbers: number[],
+): Promise<BulkResult[]> {
+  const config = await configForRepository(await getRepositoryOr404(tenantId, id));
+  const results = await runBulk(numbers, (n) => updateIssueState(config, n, 'closed'));
+  invalidateSnapshot(tenantId, id);
+  return results;
+}
+
 // Label que sinaliza ao agente de IA que a Story deve entrar em desenvolvimento.
 const DEV_AGENT_LABEL = 'spec-wave:dev-agent';
 
@@ -508,6 +650,65 @@ export async function deleteWorkItemForRepository(
   invalidateSnapshot(tenantId, id);
 }
 
+// Arquiva (fecha) um work item e TODOS os seus descendentes (Backlog do PM).
+// Usado para arquivar uma Initiative/Epic/Feature junto com filhos. Fecha só os
+// itens ainda abertos; devolve quantos foram arquivados. Fecha sequencialmente
+// para respeitar o rate limit de mutações do GitHub.
+export async function archiveWorkItemSubtreeForRepository(
+  tenantId: string,
+  id: string,
+  rootNumber: number,
+): Promise<{ archived: number }> {
+  const config = await configForRepository(await getRepositoryOr404(tenantId, id));
+  const snapshot = await loadSnapshotForRepository(tenantId, id);
+
+  const childrenByParent = new Map<number, number[]>();
+  for (const item of snapshot.items) {
+    if (item.parentNumber != null) {
+      const bucket = childrenByParent.get(item.parentNumber);
+      if (bucket) bucket.push(item.number);
+      else childrenByParent.set(item.parentNumber, [item.number]);
+    }
+  }
+  const byNumber = new Map(snapshot.items.map((i) => [i.number, i]));
+
+  // BFS pela subárvore a partir da raiz.
+  const subtree: number[] = [];
+  const seen = new Set<number>();
+  const stack = [rootNumber];
+  while (stack.length) {
+    const n = stack.pop() as number;
+    if (seen.has(n)) continue;
+    seen.add(n);
+    subtree.push(n);
+    for (const child of childrenByParent.get(n) ?? []) stack.push(child);
+  }
+
+  // Fecha só o que está aberto (a raiz pode não estar no snapshot → fecha mesmo assim).
+  const toClose = subtree.filter((n) => {
+    const item = byNumber.get(n);
+    return !item || item.state === 'open';
+  });
+
+  // Fecha em paralelo com concorrência limitada — sequencial estoura o teto de
+  // ~29 s do API Gateway em subárvores grandes; concorrência baixa evita os
+  // secondary rate limits do GitHub para mutações.
+  const CONCURRENCY = 5;
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < toClose.length) {
+      const n = toClose[cursor++];
+      await updateIssueState(config, n, 'closed');
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, toClose.length) }, () => worker()),
+  );
+
+  invalidateSnapshot(tenantId, id);
+  return { archived: toClose.length };
+}
+
 // Move a etapa canônica de um work item no board (Start Story, aprovar/devolver
 // UAT, mover no Technical Backlog). Resolve a opção crua do board cujo nome
 // normaliza para a StageName pedida; issue fora do board é adicionada antes.
@@ -516,6 +717,7 @@ export async function setStageForRepository(
   id: string,
   number: number,
   stage: StageName,
+  origin: StageOrigin = 'manual',
 ): Promise<void> {
   const record = await getRepositoryOr404(tenantId, id);
   const config = await configForRepository(record);
@@ -545,7 +747,66 @@ export async function setStageForRepository(
   }
 
   await moveProjectStage(config, project.projectId, itemId, project.etapaFieldId, option[1]);
+
+  // Registra a ENTRADA na etapa (tempo-na-etapa das telas do PM) e a ÚLTIMA
+  // transição do item (supressão da automação do workspace Dev), com o autor
+  // real da sessão (null quando origin=automation). Best-effort.
+  const at = new Date().toISOString();
+  const sub = origin === 'automation' ? null : (requestContext.getStore()?.sub ?? null);
+  try {
+    await putStageEntry({
+      tenantId,
+      repoId: id,
+      stage,
+      issueNumber: number,
+      at,
+      approximate: false,
+      origin,
+      sub,
+    });
+    await putStageLast({ tenantId, repoId: id, issueNumber: number, stage, at, origin, sub });
+  } catch (err) {
+    logger.warn(`Issue #${number}: etapa movida, mas falhou o registro de transição: ${(err as Error).message}`);
+  }
+
   invalidateSnapshot(tenantId, id);
+}
+
+// Idades na etapa (GET stage-ages): entrada registrada por item na etapa pedida,
+// reconciliando itens movidos por fora da UI — sem registro, recebem `at = agora`
+// com marcador approximate (a UI mostra "~{n}d").
+export async function stageAgesForRepository(
+  tenantId: string,
+  id: string,
+  stage: StageName,
+): Promise<{ number: number; at: string; approximate: boolean }[]> {
+  const [entries, snapshot] = await Promise.all([
+    queryStageEntries(tenantId, id, stage),
+    loadSnapshotForRepository(tenantId, id),
+  ]);
+  const byNumber = new Map(entries.map((e) => [e.issueNumber, e]));
+  const now = new Date().toISOString();
+  const out: { number: number; at: string; approximate: boolean }[] = [];
+
+  for (const item of snapshot.items) {
+    if (item.stage !== stage || item.state !== 'open') continue;
+    const entry = byNumber.get(item.number);
+    if (entry) {
+      out.push({ number: item.number, at: entry.at, approximate: entry.approximate });
+    } else {
+      // Reconciliação: item chegou à etapa por fora do backend.
+      out.push({ number: item.number, at: now, approximate: true });
+      putStageEntry({
+        tenantId,
+        repoId: id,
+        stage,
+        issueNumber: item.number,
+        at: now,
+        approximate: true,
+      }).catch(() => undefined);
+    }
+  }
+  return out;
 }
 
 // Lista os épicos (issues [EPIC]) de um repositório do tenant.

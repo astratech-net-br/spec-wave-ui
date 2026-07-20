@@ -6,6 +6,8 @@ import type { NextFunction, Request, Response } from 'express';
 import { isValidRepoId } from '../lib/validation.ts';
 import { HttpError } from '../lib/errors.ts';
 import { tenantOf } from '../middleware/auth.ts';
+import { visibleRepoIds } from '../middleware/authorize.ts';
+import { putAuditLog } from '../db/dynamo.ts';
 import { loadEpicSummaries } from '../services/workItemService.ts';
 import {
   createRepository,
@@ -15,7 +17,12 @@ import {
 } from '../services/repositoryService.ts';
 
 export async function getAllRepositories(req: Request, res: Response): Promise<void> {
-  res.json(await listRepositories(tenantOf(req).tenantId));
+  const tenant = tenantOf(req);
+  const repos = await listRepositories(tenant.tenantId);
+  // Papéis por repositório (spec Gestão de usuários §4.1): membro sem papel não
+  // vê o repositório no seletor; owner (root) vê todos.
+  const visible = await visibleRepoIds(tenant.tenantId, tenant.sub, tenant.role);
+  res.json(visible === null ? repos : repos.filter((r) => visible.has(r.id)));
 }
 
 // POST /api/repositories — cadastra um repositório (e, opcionalmente, introspecta
@@ -36,10 +43,19 @@ export async function postRepository(
   }
 
   try {
-    const repo = await createRepository(tenantOf(req).tenantId, {
+    const tenant = tenantOf(req);
+    const repo = await createRepository(tenant.tenantId, {
       url: body.url,
       projectUrl: typeof body.projectUrl === 'string' ? body.projectUrl : undefined,
     });
+    putAuditLog({
+      tenantId: tenant.tenantId,
+      at: new Date().toISOString(),
+      sub: tenant.sub,
+      action: 'repository.create',
+      target: repo.id,
+      detail: repo.name,
+    }).catch(() => undefined);
     res.status(201).json(repo);
   } catch (err) {
     if (err instanceof HttpError) {
@@ -85,7 +101,12 @@ export async function patchRepository(
   }
 
   const body = (req.body ?? {}) as Record<string, unknown>;
-  const input: { url?: string; projectUrl?: string } = {};
+  const input: {
+    url?: string;
+    projectUrl?: string;
+    wipThreshold?: number | null;
+    slackBotToken?: string;
+  } = {};
   if ('url' in body) {
     if (typeof body.url !== 'string' || body.url.trim().length === 0) {
       res.status(400).json({ error: 'A URL do repositório não pode ser vazia.' });
@@ -100,13 +121,42 @@ export async function patchRepository(
     }
     input.projectUrl = body.projectUrl;
   }
-  if (input.url === undefined && input.projectUrl === undefined) {
-    res.status(400).json({ error: 'Nada para atualizar: informe url e/ou projectUrl.' });
+  if ('wipThreshold' in body) {
+    if (body.wipThreshold !== null && typeof body.wipThreshold !== 'number') {
+      res.status(400).json({ error: 'wipThreshold deve ser um número (ou null para o default).' });
+      return;
+    }
+    input.wipThreshold = body.wipThreshold as number | null;
+  }
+  if ('slackBotToken' in body) {
+    if (typeof body.slackBotToken !== 'string') {
+      res.status(400).json({ error: 'slackBotToken deve ser um texto (vazio para remover).' });
+      return;
+    }
+    input.slackBotToken = body.slackBotToken;
+  }
+  if (
+    input.url === undefined &&
+    input.projectUrl === undefined &&
+    input.wipThreshold === undefined &&
+    input.slackBotToken === undefined
+  ) {
+    res.status(400).json({ error: 'Nada para atualizar: informe url, projectUrl, wipThreshold e/ou slackBotToken.' });
     return;
   }
 
   try {
-    res.json(await updateRepository(tenantOf(req).tenantId, repoId, input));
+    const tenant = tenantOf(req);
+    const updated = await updateRepository(tenant.tenantId, repoId, input);
+    putAuditLog({
+      tenantId: tenant.tenantId,
+      at: new Date().toISOString(),
+      sub: tenant.sub,
+      action: 'repository.update',
+      target: repoId,
+      detail: Object.keys(input).join(','),
+    }).catch(() => undefined);
+    res.json(updated);
   } catch (err) {
     if (err instanceof HttpError) {
       res.status(err.status).json({ error: err.message });

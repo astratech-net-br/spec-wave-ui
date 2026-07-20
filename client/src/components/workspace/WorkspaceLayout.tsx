@@ -14,7 +14,8 @@ import {
   WorkspaceProvider,
 } from '../../state/WorkspaceContext';
 import { isWorkspacePage, WORKSPACE_NAV } from '../../lib/workspaceNav';
-import { REPO_NEW_HREF } from '../../lib/router';
+import { hrefForWorkspace, REPO_NEW_HREF } from '../../lib/router';
+import { useMe } from '../../hooks/useMe';
 import { WorkspaceSidebar } from './WorkspaceSidebar';
 import { WorkspaceTopbar } from './WorkspaceTopbar';
 import type { WorkspacePageProps } from './types';
@@ -23,7 +24,10 @@ import { PmDashboard } from './pm/PmDashboard';
 import { ProjectPage } from './pm/ProjectPage';
 import { BacklogPage } from './pm/BacklogPage';
 import { PrioritizationPage } from './pm/PrioritizationPage';
+import { SpecificationPage as PmSpecificationPage } from './pm/SpecificationPage';
 import { PlanningPage } from './pm/PlanningPage';
+import { MilestonesTimelinePage } from './pm/MilestonesTimelinePage';
+import { HomologationPage } from './pm/HomologationPage';
 import { PmProgressPage } from './pm/ProgressPage';
 import { TechDashboard } from './tech/TechDashboard';
 import { SpecificationPage } from './tech/SpecificationPage';
@@ -34,6 +38,7 @@ import { TechCodeReviewPage } from './tech/CodeReviewPage';
 import { TechQaPage } from './tech/QaPage';
 import { UatPage } from './tech/UatPage';
 import { TechProgressPage } from './tech/ProgressPage';
+import { autoPickMilestone } from './dev/devShared';
 import { DevDashboard } from './dev/DevDashboard';
 import { PendingPage } from './dev/PendingPage';
 import { InProgressPage } from './dev/InProgressPage';
@@ -47,7 +52,10 @@ const PAGES: Record<WorkspaceRole, Record<string, ComponentType<WorkspacePagePro
     project: ProjectPage,
     backlog: BacklogPage,
     prioritization: PrioritizationPage,
+    specification: PmSpecificationPage,
     planning: PlanningPage,
+    milestones: MilestonesTimelinePage,
+    homologation: HomologationPage,
     progress: PmProgressPage,
   },
   tech: {
@@ -74,12 +82,28 @@ const PAGES: Record<WorkspaceRole, Record<string, ComponentType<WorkspacePagePro
 interface WorkspaceLayoutProps {
   role: WorkspaceRole;
   page: string;
+  query?: Record<string, string>;
 }
 
-function WorkspaceShell({ role, page: rawPage }: WorkspaceLayoutProps) {
+function WorkspaceShell({ role, page: rawPage, query }: WorkspaceLayoutProps) {
   const page = isWorkspacePage(role, rawPage) ? rawPage : 'dashboard';
   const { repoId, setRepoId, milestoneNumber, setMilestoneNumber } = useWorkspace();
   const repos = useRepositories();
+  const { me } = useMe();
+
+  // Papéis reais (spec Gestão de usuários §4.1): com enforcement ativo, o
+  // switcher/URL só pode assumir papéis possuídos no repositório corrente —
+  // papel não possuído redireciona para o primeiro possuído (root vê todos).
+  const myRepoRoles =
+    me?.enforced && !me.isRoot && repoId
+      ? (me.roles.find((r) => r.repoId === repoId)?.roles ?? [])
+      : null; // null = sem restrição
+  useEffect(() => {
+    if (myRepoRoles && myRepoRoles.length > 0 && !myRepoRoles.includes(role)) {
+      window.location.hash = hrefForWorkspace(myRepoRoles[0] as WorkspaceRole, 'dashboard');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myRepoRoles?.join(','), role]);
 
   // Lembra o papel para o link "Abrir workspace" das outras telas.
   useEffect(() => rememberWorkspaceRole(role), [role]);
@@ -96,13 +120,47 @@ function WorkspaceShell({ role, page: rawPage }: WorkspaceLayoutProps) {
   const { state, retry, refresh } = useProjectSnapshot(validRepoId);
   const snapshot = state.phase === 'ready' ? state.snapshot : null;
 
+  // Auto-seleção do milestone corrente (papel dev): sem seleção válida, escolhe
+  // o Em execução de ETA mais próxima (senão o Planejada de início mais próximo).
+  useEffect(() => {
+    if (role !== 'dev' || !snapshot) return;
+    const openOk = snapshot.milestones.some(
+      (m) => m.state === 'open' && m.number === milestoneNumber,
+    );
+    if (openOk) return;
+    const pick = autoPickMilestone(snapshot.milestones);
+    if (pick != null && pick !== milestoneNumber) setMilestoneNumber(pick);
+  }, [role, snapshot, milestoneNumber, setMilestoneNumber]);
+
   const label = WORKSPACE_NAV[role].find((n) => n.page === page)?.label ?? page;
   const Page = PAGES[role][page];
+
+  // Autenticado sem nenhum papel e não-root (spec §2): sem acesso.
+  if (me?.enforced && !me.isRoot && me.roles.length === 0) {
+    return (
+      <div className="ws">
+        <main className="ws-content" style={{ margin: 'auto' }}>
+          <div className="repo-empty">
+            <div className="repo-empty__art" aria-hidden="true">🔒</div>
+            <p className="repo-empty__title">Sem acesso — peça a um administrador.</p>
+            <p>
+              Informe seu usuário: <code>{me.login ? `@${me.login}` : (me.email ?? '—')}</code>
+            </p>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="ws">
       <WorkspaceSidebar role={role} page={page} />
       <div className="ws-main">
+        {me && !me.enforced && me.isRoot && (
+          <div className="ws-authbanner">
+            🔓 Autenticação em modo de transição — papéis ainda não aplicados (AUTH_ENFORCED=false).
+          </div>
+        )}
         <WorkspaceTopbar
           role={role}
           page={page}
@@ -162,6 +220,7 @@ function WorkspaceShell({ role, page: rawPage }: WorkspaceLayoutProps) {
               repoId={validRepoId}
               snapshot={snapshot}
               milestoneNumber={role === 'dev' ? milestoneNumber : null}
+              query={query}
               refresh={refresh}
             />
           )}

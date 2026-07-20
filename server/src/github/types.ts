@@ -36,6 +36,11 @@ export interface GhIssue {
   // É a ÚNICA fonte do "em andamento": o `state` open/closed não distingue uma
   // task a fazer de uma em execução. `null` quando a issue não está num Project.
   projectStatus?: string | null;
+  // Valor do campo "Etapa" (single-select) do board — a fase do kanban da issue,
+  // ex.: "📥 Backlog", "🚧 Desenvolvimento", "👀 Code Review". Distinto do
+  // "Status": a Etapa é a direção no board, o Status é o progresso dentro dela.
+  // `null` quando a issue não está num Project ou não tem a Etapa definida.
+  projectStage?: string | null;
   // Sub-issues (GitHub sub-issues / hierarquia). Para uma Feature, contém suas
   // Stories; cada Story contém suas Tasks. Folhas têm subIssues vazio/ausente.
   subIssues?: GhIssue[];
@@ -73,6 +78,7 @@ export interface GhSnapshotIssue {
   url: string;
   state: 'OPEN' | 'CLOSED';
   createdAt: string;
+  closedAt: string | null;
   labels: string[];
   assignees: GhUser[];
   milestone: { number: number; title: string } | null;
@@ -91,4 +97,5 @@ export interface GhMilestoneSummary {
   state: 'open' | 'closed';
   openIssues: number;
   closedIssues: number;
+  description: string | null;
 }

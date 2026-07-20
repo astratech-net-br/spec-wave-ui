@@ -22,7 +22,10 @@ export const WORKSPACE_NAV: Record<WorkspaceRole, WorkspaceNavItem[]> = {
     { page: 'project', label: 'Project', icon: '🗂️' },
     { page: 'backlog', label: 'Backlog', icon: '📥' },
     { page: 'prioritization', label: 'Prioritization', icon: '🎯' },
+    { page: 'specification', label: 'Specification', icon: '📄' },
     { page: 'planning', label: 'Planning', icon: '🗓️' },
+    { page: 'milestones', label: 'Milestones', icon: '📅' },
+    { page: 'homologation', label: 'Homologação', icon: '✅' },
     { page: 'progress', label: 'Progress', icon: '📈' },
   ],
   tech: [
