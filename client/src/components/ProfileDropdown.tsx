@@ -1,6 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { redirectToLogout } from '../auth/cognito';
+import { useSession } from '../hooks/useSession';
 
-// Dropdown do menu de perfil (Story #70 / Task #71 + #73).
+// Dropdown do menu de perfil (Story #70 / Task #71 + #73; logout na Story #74).
 //
 // Componente controlado: o pai (`ProfileMenu`) mantém o estado de abertura e
 // passa `isOpen`/`onClose`. Exibe os dados obrigatórios do RN004 — nome do
@@ -10,6 +12,11 @@ import { useEffect, useRef } from 'react';
 // (Task #73): `role="menu"` + `aria-labelledby`, itens acionáveis com
 // `role="menuitem"`, foco no primeiro item ao abrir, navegação por ↑/↓/Home/End
 // e fechamento por ESC devolvendo o foco ao gatilho.
+//
+// Logout (Story #74): o botão aciona `logout` do `useSession` (revoga a sessão
+// no servidor e limpa o estado local), mostra um estado de carregamento enquanto
+// a requisição corre (Task #76) e, ao concluir, redireciona para o login. Erros
+// são informados inline sem fechar o dropdown (Task #77).
 
 export interface ProfileUserData {
   name: string;
@@ -28,9 +35,12 @@ interface ProfileDropdownProps {
   /** Fecha e devolve o foco ao gatilho (ESC / clique em item). */
   onCloseAndRestoreFocus: () => void;
   userData: ProfileUserData;
-  /** Tenant ativo; `null` quando os dados estão indisponíveis (CE002). */
+  /** Tenant ativo; `null` enquanto carrega ou quando indisponível (CE002). */
   tenantData: ProfileTenantData | null;
-  onLogout: () => void;
+  /** Busca do tenant em andamento — exibe skeleton no lugar dos valores. */
+  tenantLoading?: boolean;
+  /** Falha ao buscar o tenant — exibe o placeholder de CE002. */
+  tenantError?: boolean;
   /** `id` do dropdown, referenciado pelo `aria-controls` do gatilho. */
   id?: string;
   /** `id` do gatilho, usado como `aria-labelledby` do menu. */
@@ -45,17 +55,49 @@ function orFallback(value: string | undefined): string {
   return value && value.trim() ? value : TENANT_FALLBACK;
 }
 
+// Campo de tenant em seus três estados (Task #80). Carregando → skeleton, que
+// ocupa a mesma altura do valor e por isso não desloca o layout do dropdown;
+// erro ou valor ausente → placeholder de CE002; caso contrário → o valor.
+function TenantField({
+  label,
+  value,
+  loading,
+}: {
+  label: string;
+  value: string | undefined;
+  loading: boolean;
+}) {
+  return (
+    <li className="profile-dropdown__info" aria-busy={loading || undefined}>
+      <span className="profile-dropdown__label">{label}</span>
+      {loading ? (
+        <span
+          className="profile-dropdown__value profile-dropdown__value--loading skeleton"
+          role="status"
+          aria-label={`Carregando ${label}`}
+        />
+      ) : (
+        <span className="profile-dropdown__value">{orFallback(value)}</span>
+      )}
+    </li>
+  );
+}
+
 export function ProfileDropdown({
   isOpen,
   onClose,
   onCloseAndRestoreFocus,
   userData,
   tenantData,
-  onLogout,
+  tenantLoading = false,
+  tenantError = false,
   id,
   labelledBy,
 }: ProfileDropdownProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const { logout } = useSession();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
 
   // Fecha ao clicar fora do dropdown. Só escuta enquanto está aberto.
   useEffect(() => {
@@ -125,12 +167,29 @@ export function ProfileDropdown({
 
   if (!isOpen) return null;
 
-  const tenantId = orFallback(tenantData?.id);
-  const tenantName = orFallback(tenantData?.name);
+  // Só mostramos skeleton enquanto a busca corre. Com erro (CE002) — ou sem
+  // dados após o carregamento — os campos caem no placeholder, e o logout do
+  // rodapé permanece acionável.
+  const tenantPending = tenantLoading && !tenantError;
 
-  const handleLogout = () => {
-    onClose();
-    onLogout();
+  // Fluxo de logout (Task #76 + #77): desabilita o botão e mostra carregamento
+  // enquanto revoga a sessão; ao concluir, redireciona para o login. Em caso de
+  // erro na revogação, o estado local já foi limpo por `logout` (evita sessão
+  // inconsistente) — informamos o usuário inline e ainda assim redirecionamos
+  // para o login, encerrando a sessão de forma segura.
+  const handleLogout = async () => {
+    if (isLoggingOut) return;
+    setLogoutError(null);
+    setIsLoggingOut(true);
+    try {
+      await logout();
+      redirectToLogout();
+    } catch {
+      setLogoutError('Não foi possível encerrar a sessão no servidor. Encerrando a sessão local e redirecionando…');
+      redirectToLogout();
+    } finally {
+      setIsLoggingOut(false);
+    }
   };
 
   return (
@@ -150,15 +209,8 @@ export function ProfileDropdown({
           )}
         </li>
 
-        <li className="profile-dropdown__info">
-          <span className="profile-dropdown__label">tenant-id</span>
-          <span className="profile-dropdown__value">{tenantId}</span>
-        </li>
-
-        <li className="profile-dropdown__info">
-          <span className="profile-dropdown__label">tenant-name</span>
-          <span className="profile-dropdown__value">{tenantName}</span>
-        </li>
+        <TenantField label="tenant-id" value={tenantData?.id} loading={tenantPending} />
+        <TenantField label="tenant-name" value={tenantData?.name} loading={tenantPending} />
 
         <li className="profile-dropdown__footer">
           <button
@@ -166,9 +218,23 @@ export function ProfileDropdown({
             className="profile-dropdown__logout"
             role="menuitem"
             onClick={handleLogout}
+            disabled={isLoggingOut}
+            aria-busy={isLoggingOut}
           >
-            Sair
+            {isLoggingOut ? (
+              <>
+                <span className="profile-dropdown__spinner" aria-hidden="true" />
+                Saindo…
+              </>
+            ) : (
+              'Sair'
+            )}
           </button>
+          {logoutError && (
+            <p className="profile-dropdown__error" role="alert">
+              {logoutError}
+            </p>
+          )}
         </li>
       </ul>
     </div>

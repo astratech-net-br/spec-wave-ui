@@ -59,11 +59,16 @@ accountRoutes.post(
 // ---------- Tenant ativo ----------
 
 // GET /api/tenant/active → dados do tenant ativo na sessão (menu de perfil,
-// Story #70). O tenant vem do claim custom:tenant_id via middleware; o nome é
-// lido do DynamoDB. Tenant sem registro META → nome vazio (o client mostra o
-// placeholder de CE002).
+// Story #70 / #78). O tenant vem do claim custom:tenant_id, injetado em
+// req.tenant pelo tenantContext (RN005: é sempre o tenant da sessão corrente,
+// nunca um id vindo do client); o nome é lido do DynamoDB já sob as credenciais
+// escopadas desse tenant. Tenant sem registro META → nome vazio (o client mostra
+// o placeholder de CE002 e mantém o logout ativo).
 accountRoutes.get('/tenant/active', (req: Request, res: Response, next: NextFunction) => {
   const { tenantId } = tenantOf(req);
+  // Resposta é específica da sessão: `no-store` impede que o CloudFront (ou
+  // qualquer cache intermediário) sirva o tenant de um usuário para outro.
+  res.set('Cache-Control', 'no-store');
   getTenant(tenantId)
     .then((tenant) => res.json({ id: tenantId, name: tenant?.name ?? '' }))
     .catch((err) => handleError(err, res, next));

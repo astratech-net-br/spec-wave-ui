@@ -278,8 +278,31 @@ button {
 .profile-dropdown__value {
   font-family: var(--font-mono);
   font-size: 12px;
+  line-height: 16px;
+  /* Reserva a altura de uma linha: skeleton, placeholder de CE002 e valor real
+     ocupam o mesmo espaço, então trocar de estado não desloca o layout. */
+  min-height: 16px;
   color: var(--text-2);
   overflow-wrap: anywhere;
+}
+
+/* Skeleton do tenant enquanto a busca corre (Task #80). */
+.profile-dropdown__value--loading {
+  display: block;
+  width: 60%;
+  animation: profile-dropdown-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes profile-dropdown-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .profile-dropdown__value--loading {
+    animation: none;
+  }
 }
 
 .profile-dropdown__footer {
@@ -310,6 +333,41 @@ button {
   background: var(--accent-soft);
   color: var(--accent);
   outline: none;
+}
+
+.profile-dropdown__logout:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+/* Spinner do estado de logout em andamento (Task #76). */
+.profile-dropdown__spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: profile-dropdown-spin 0.6s linear infinite;
+}
+
+@keyframes profile-dropdown-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .profile-dropdown__spinner {
+    animation-duration: 1.5s;
+  }
+}
+
+/* Mensagem de erro do logout (Task #77) — inline, sem fechar o dropdown. */
+.profile-dropdown__error {
+  margin: 6px 4px 2px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--danger, #c00);
 }
 
 .profile-dropdown__item:focus-visible {
