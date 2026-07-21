@@ -114,6 +114,24 @@ export class WebStack extends cdk.Stack {
           });
     }
 
+    // Fallback de SPA via rewrite de URI SÓ no behavior do S3: caminho sem
+    // extensão → /index.html. Substitui os errorResponses globais da
+    // distribution, que eram aplicados a TODAS as origins e reescreviam
+    // erros da API (ex.: o 403 do guard de papéis) para index.html com 200 —
+    // o client recebia HTML onde esperava JSON. A API agora devolve seus
+    // erros reais; o hash-router continua funcionando (as rotas vivem no
+    // fragmento, e qualquer path "limpo" cai no index.html).
+    const spaRewriteFn = new cloudfront.Function(this, 'SpaRewrite', {
+      runtime: cloudfront.FunctionRuntime.JS_2_0,
+      code: cloudfront.FunctionCode.fromInline(
+        'function handler(event) {\n' +
+          '  var uri = event.request.uri;\n' +
+          "  if (!uri.split('/').pop().includes('.')) { event.request.uri = '/index.html'; }\n" +
+          '  return event.request;\n' +
+          '}',
+      ),
+    });
+
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
       webAclId: webAcl.attrArn,
       domainNames,
@@ -122,17 +140,15 @@ export class WebStack extends cdk.Stack {
         origin: origins.S3BucketOrigin.withOriginAccessControl(bucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        functionAssociations: [
+          { function: spaRewriteFn, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
+        ],
       },
       additionalBehaviors: {
         '/api/*': apiBehavior,
         '/status': apiBehavior,
       },
       defaultRootObject: 'index.html',
-      // SPA com hash-router: 403/404 do S3 voltam ao index.html.
-      errorResponses: [
-        { httpStatus: 403, responseHttpStatus: 200, responsePagePath: '/index.html' },
-        { httpStatus: 404, responseHttpStatus: 200, responsePagePath: '/index.html' },
-      ],
       minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
     });
 
