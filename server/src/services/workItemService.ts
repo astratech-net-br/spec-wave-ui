@@ -31,14 +31,17 @@ import {
   fetchIssueTitle,
   fetchIssueTree,
   fetchNumberField,
+  fetchProjectFields,
   fetchProjectItemId,
   fetchSingleSelectField,
   moveProjectStage,
+  parseProjectUrl,
   removeLabel,
   setProjectItemNumberValue,
   updateIssue,
   updateIssueState,
   type GitHubConfig,
+  type ProjectConfig,
 } from '../github/client.ts';
 import { logger } from '../lib/logger.ts';
 import { HttpError } from '../lib/errors.ts';
@@ -50,6 +53,7 @@ import {
   putStageEntry,
   putStageLast,
   queryStageEntries,
+  replaceRepositoryRecord,
   type StageOrigin,
 } from '../db/dynamo.ts';
 import {
@@ -737,7 +741,7 @@ export async function setStageForRepository(
 ): Promise<void> {
   const record = await getRepositoryOr404(tenantId, id);
   const config = await configForRepository(record);
-  const project = config.project;
+  let project = config.project;
   if (!project) {
     throw new HttpError(
       409,
@@ -745,9 +749,34 @@ export async function setStageForRepository(
     );
   }
 
-  const option = Object.entries(project.stageOptions).find(
-    ([name]) => normalizeStage(name) === stage,
-  );
+  const findOption = (p: ProjectConfig) =>
+    Object.entries(p.stageOptions).find(([name]) => normalizeStage(name) === stage);
+
+  let option = findOption(project);
+  if (!option && record.projectUrl) {
+    // Self-healing: as stageOptions persistidas são um retrato do vínculo — o
+    // board evolui depois (colunas novas/renomeadas, campo recriado) e o
+    // registro fica defasado. Re-introspecta ao vivo, atualiza o registro e
+    // tenta de novo antes de desistir.
+    const ref = parseProjectUrl(record.projectUrl);
+    const fresh = ref ? await fetchProjectFields(config, ref).catch(() => null) : null;
+    if (fresh) {
+      project = fresh;
+      option = findOption(fresh);
+      await replaceRepositoryRecord(
+        {
+          ...record,
+          projectId: fresh.projectId,
+          projectNumber: fresh.projectNumber,
+          etapaFieldId: fresh.etapaFieldId,
+          stageOptions: fresh.stageOptions,
+        },
+        record.url,
+      ).catch((err) =>
+        logger.warn(`Repo ${id}: opções do board atualizadas, mas falhou persistir: ${(err as Error).message}`),
+      );
+    }
+  }
   if (!option) {
     throw new HttpError(
       422,
