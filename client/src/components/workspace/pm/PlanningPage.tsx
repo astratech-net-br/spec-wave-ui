@@ -235,7 +235,7 @@ export function PlanningPage({ repoId, snapshot, refresh }: WorkspacePageProps) 
     working.filter(
       (i) =>
         i.parentNumber === featureNumber &&
-        (typeSlug(i) === 'story' || typeSlug(i) === 'bug'),
+        (typeSlug(i) === 'story' || typeSlug(i) === 'bug' || typeSlug(i) === 'spike'),
     );
 
   const isDecomposed = (featureNumber: number): boolean =>
@@ -281,7 +281,7 @@ export function PlanningPage({ repoId, snapshot, refresh }: WorkspacePageProps) 
     working.filter(
       (i) =>
         i.milestone?.number === m.number &&
-        (typeSlug(i) === 'story' || typeSlug(i) === 'bug'),
+        (typeSlug(i) === 'story' || typeSlug(i) === 'bug' || typeSlug(i) === 'spike'),
     );
 
   interface Totals {
@@ -442,7 +442,7 @@ export function PlanningPage({ repoId, snapshot, refresh }: WorkspacePageProps) 
           .filter(
             (i) =>
               i.milestone?.number === m.number &&
-              (typeSlug(i) === 'story' || typeSlug(i) === 'bug'),
+              (typeSlug(i) === 'story' || typeSlug(i) === 'bug' || typeSlug(i) === 'spike'),
           )
           .reduce((s, i) => s + (i.points ?? 0), 0);
       const velocity = closed.reduce((s, m) => s + ptsOfClosed(m), 0) / closed.length;

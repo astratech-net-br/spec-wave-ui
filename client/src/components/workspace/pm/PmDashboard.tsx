@@ -27,7 +27,8 @@ const UAT_AGE_DAYS = 5;
 
 type Level = 'neutral' | 'warning' | 'danger';
 
-const isExec = (i: SnapshotItem): boolean => typeSlug(i) === 'story' || typeSlug(i) === 'bug';
+const isExec = (i: SnapshotItem): boolean =>
+  typeSlug(i) === 'story' || typeSlug(i) === 'bug' || typeSlug(i) === 'spike';
 
 interface ReleaseRow {
   m: MilestoneSummary;

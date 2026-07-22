@@ -137,7 +137,7 @@ export function TechQaPage({ repoId, snapshot, refresh }: WorkspacePageProps) {
           onToggle={toggle}
           renderRow={(item) => {
             const feature = featureOf(item, byNumber);
-            const isBug = typeSlug(item) === 'bug';
+            const straightToDone = typeSlug(item) === 'bug' || typeSlug(item) === 'spike';
             return (
               <div key={item.number} className="ex-row">
                 <span className="ex-row__lead" />
@@ -162,8 +162,8 @@ export function TechQaPage({ repoId, snapshot, refresh }: WorkspacePageProps) {
                     className="btn btn--sm btn--accent"
                     disabled={busy}
                     title={
-                      isBug
-                        ? 'Bug aprovado vai direto para Done (correção técnica não tem validação de negócio)'
+                      straightToDone
+                        ? 'Bug/Spike aprovado vai direto para Done (sem validação de negócio)'
                         : 'Story aprovada segue para a Homologação (aceite de valor do PM)'
                     }
                     onClick={() => doApprove(item)}

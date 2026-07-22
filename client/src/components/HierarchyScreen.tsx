@@ -157,24 +157,62 @@ export function HierarchyScreen({ repoId, number }: HierarchyScreenProps) {
 
         {/* Épicos de uma iniciativa */}
         {snapshot && node && (
-          nodeEpics.length === 0 ? (
-            <div className="repo-empty">
-              <div className="repo-empty__art" aria-hidden="true">📭</div>
-              <p className="repo-empty__title">Esta iniciativa ainda não tem épicos</p>
-            </div>
-          ) : (
-            <div className="repo-grid">
-              {nodeEpics.map((epic) => (
-                <NodeCard
-                  key={epic.number}
-                  item={epic}
-                  href={hrefForItem(repoId, 'epic', epic.number)}
-                  childrenLabel="features"
-                  childrenCount={childCount(epic.number, 'feature')}
-                />
-              ))}
-            </div>
-          )
+          <>
+            {nodeEpics.length === 0 ? (
+              <div className="repo-empty">
+                <div className="repo-empty__art" aria-hidden="true">📭</div>
+                <p className="repo-empty__title">Esta iniciativa ainda não tem épicos</p>
+              </div>
+            ) : (
+              <div className="repo-grid">
+                {nodeEpics.map((epic) => (
+                  <NodeCard
+                    key={epic.number}
+                    item={epic}
+                    href={hrefForItem(repoId, 'epic', epic.number)}
+                    childrenLabel="features"
+                    childrenCount={childCount(epic.number, 'feature')}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* RFCs da iniciativa (diretos ou sob os épicos dela) — documentos
+                de decisão: fora do fluxo, linkam para a issue no GitHub. */}
+            {(() => {
+              const epicNumbers = new Set(nodeEpics.map((e) => e.number));
+              const rfcs = snapshot.items.filter(
+                (i) =>
+                  typeSlug(i) === 'rfc' &&
+                  (i.parentNumber === node.number ||
+                    (i.parentNumber != null && epicNumbers.has(i.parentNumber))),
+              );
+              if (rfcs.length === 0) return null;
+              return (
+                <>
+                  <div className="dashboard__head" style={{ marginTop: 24 }}>
+                    <h1 className="dashboard__title">RFCs</h1>
+                  </div>
+                  <ul className="hier-rfcs">
+                    {rfcs.map((rfc) => (
+                      <li key={rfc.number}>
+                        <a href={rfc.url} target="_blank" rel="noreferrer" title={rfc.title}>
+                          <span className="proj-badge proj-badge--rfc">RFC</span>
+                          <span className="mono">#{rfc.number}</span> {rfc.title}
+                          {rfc.progress && rfc.progress.total > 0 && (
+                            <span className="hier-rfcs__progress mono">
+                              {rfc.progress.completed}/{rfc.progress.total} tasks
+                            </span>
+                          )}
+                          {rfc.state === 'closed' && <span className="hier-rfcs__done">✓</span>}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              );
+            })()}
+          </>
         )}
 
         {/* Raiz: iniciativas (ou épicos, quando o repo não usa iniciativas) */}

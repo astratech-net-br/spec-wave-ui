@@ -12,7 +12,7 @@ const DAY = 86_400_000;
 const COLLAPSE_KEY = 'spec-flow.exec-collapse';
 
 export const isExecItem = (i: SnapshotItem): boolean =>
-  typeSlug(i) === 'story' || typeSlug(i) === 'bug';
+  typeSlug(i) === 'story' || typeSlug(i) === 'bug' || typeSlug(i) === 'spike';
 
 export function daysFrom(iso: string): number {
   const ms = Date.now() - Date.parse(iso);
@@ -98,9 +98,8 @@ export function groupByMilestoneEta(
 
 export function TypeBadgeExec({ item }: { item: SnapshotItem }) {
   const slug = typeSlug(item);
-  return (
-    <span className={`proj-badge proj-badge--${slug}`}>{slug === 'bug' ? 'BUG' : 'STORY'}</span>
-  );
+  const label = slug === 'bug' ? 'BUG' : slug === 'spike' ? 'SPIKE' : 'STORY';
+  return <span className={`proj-badge proj-badge--${slug}`}>{label}</span>;
 }
 
 export function TimeCell({

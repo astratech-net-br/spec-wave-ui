@@ -39,6 +39,11 @@ function levelFromLabels(labels: string[]): ItemLevel | null {
   if (labels.includes('[FEATURE]')) return 'feature';
   if (labels.includes('[STORY]')) return 'story';
   if (labels.includes('[TASK]')) return 'task';
+  // RFC não pertence à cadeia de levels: fixa 'unknown' para não herdar o
+  // level do pai na propagação (um [RFC] sob epic viraria level 'feature' e
+  // vazaria para as telas que filtram por level). As telas o identificam pelo
+  // label via typeSlug.
+  if (labels.includes('[RFC]')) return 'unknown';
   return null;
 }
 

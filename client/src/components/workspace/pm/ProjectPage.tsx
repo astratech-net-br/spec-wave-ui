@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState, type DragEvent } from 'react';
 import type { SnapshotItem, WorkItemType } from '@spec-flow/shared';
-import { isAllowedParent, PRIORITIES, WORK_ITEM_TYPES } from '@spec-flow/shared';
+import { ALLOWED_PARENTS, isAllowedParent, PRIORITIES, WORK_ITEM_TYPES } from '@spec-flow/shared';
 import type { WorkspacePageProps } from '../types';
 import { createWorkItem } from '../../../data/workItem';
 import { reparentWorkItem, reorderWorkItems } from '../../../data/workspace';
@@ -23,6 +23,7 @@ const TYPE_OPTION_LABEL: Record<WorkItemType, string> = {
   task: 'Task',
   bug: 'Bug',
   spike: 'Spike',
+  rfc: 'RFC',
 };
 
 function statusLabel(item: SnapshotItem): string {
@@ -50,13 +51,36 @@ function CreateForm({
   const [parent, setParent] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Só pais permitidos pela matriz de hierarquia para o tipo escolhido
+  // (ALLOWED_PARENTS — espelha o 422 do server).
   const parentOptions = useMemo(
-    () => [...items].sort((a, b) => a.number - b.number),
-    [items],
+    () =>
+      items
+        .filter((i) => {
+          const t = asType(i);
+          return t != null && isAllowedParent(t, type);
+        })
+        .sort((a, b) => a.number - b.number),
+    [items, type],
   );
+  const parentInvalid = parent !== '' && !parentOptions.some((i) => String(i.number) === parent);
+  const parentHint = ALLOWED_PARENTS[type].length
+    ? `Pais aceitos para ${TYPE_OPTION_LABEL[type]}: ${ALLOWED_PARENTS[type].map((t) => TYPE_OPTION_LABEL[t]).join(', ')}.`
+    : `${TYPE_OPTION_LABEL[type]} é sempre raiz (sem pai).`;
+
+  // Trocar o tipo pode invalidar o pai selecionado — reseta.
+  const pickType = (next: WorkItemType) => {
+    setType(next);
+    if (parent && !items.some((i) => {
+      const t = asType(i);
+      return String(i.number) === parent && t != null && isAllowedParent(t, next);
+    })) {
+      setParent('');
+    }
+  };
 
   const submit = () => {
-    if (!title.trim()) return;
+    if (!title.trim() || parentInvalid) return;
     setSaving(true);
     createWorkItem(repoId, {
       type,
@@ -74,7 +98,12 @@ function CreateForm({
   return (
     <div className="idea-form">
       <div className="proj-form__row">
-        <select value={type} onChange={(e) => setType(e.target.value as WorkItemType)} aria-label="Tipo">
+        <select
+          value={type}
+          onChange={(e) => pickType(e.target.value as WorkItemType)}
+          aria-label="Tipo"
+          title={parentHint}
+        >
           {WORK_ITEM_TYPES.map((t) => (
             <option key={t} value={t}>
               {TYPE_OPTION_LABEL[t]}
@@ -90,8 +119,16 @@ function CreateForm({
         />
       </div>
       <div className="proj-form__row">
-        <select value={parent} onChange={(e) => setParent(e.target.value)} aria-label="Parent">
-          <option value="">Sem parent (raiz)</option>
+        <select
+          value={parentInvalid ? '' : parent}
+          onChange={(e) => setParent(e.target.value)}
+          aria-label="Parent"
+          title={parentHint}
+          disabled={ALLOWED_PARENTS[type].length === 0}
+        >
+          <option value="">
+            {ALLOWED_PARENTS[type].length === 0 ? 'Raiz (sem pai)' : 'Sem parent (raiz)'}
+          </option>
           {parentOptions.map((i) => (
             <option key={i.number} value={i.number}>
               #{i.number} {typeOf(i)} — {i.title}
@@ -130,7 +167,7 @@ function CreateForm({
           type="button"
           className="btn btn--sm btn--accent"
           onClick={submit}
-          disabled={saving || !title.trim()}
+          disabled={saving || !title.trim() || parentInvalid}
         >
           {saving ? 'Criando…' : 'Criar item'}
         </button>
@@ -471,8 +508,9 @@ function TreeView({
     <div className="proj-tree" aria-busy={busy}>
       <p className="proj-tree__hint">
         Arraste um item sobre outro para defini-lo como <strong>pai</strong> (hierarquia respeitada:
-        Initiative → Epic → Feature → Story → Task). Segure <strong>Shift</strong> e arraste para
-        <strong> reordenar</strong> entre irmãos.
+        Initiative → Epic → Feature → Story → Task · Bug sob Feature/Story · Spike sob
+        Initiative/Epic/Feature · RFC sob Initiative/Epic, com Tasks). Segure{' '}
+        <strong>Shift</strong> e arraste para <strong>reordenar</strong> entre irmãos.
       </p>
       {topRoots.length > 0 && (
         <ul className="proj-tree__list">

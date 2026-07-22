@@ -307,6 +307,7 @@ const TYPE_LABEL: Record<WorkItemType, string> = {
   task: '[TASK]',
   bug: '[BUG]',
   spike: '[SPIKE]',
+  rfc: '[RFC]',
 };
 const TYPE_BOARD_OPTION: Record<WorkItemType, string> = {
   initiative: 'Initiative',
@@ -316,6 +317,7 @@ const TYPE_BOARD_OPTION: Record<WorkItemType, string> = {
   task: 'Task',
   bug: 'Bug',
   spike: 'Spike',
+  rfc: 'RFC',
 };
 
 // Corpo padrão (mesmo shape do CLI): referência ao pai (que o parentFromBody
@@ -378,10 +380,24 @@ export async function createWorkItemForRepository(
   if (input.priority) labels.push(input.priority);
   if (input.area) labels.push(input.area);
 
-  // Node id + título do pai (para o vínculo e a referência no corpo).
+  // Node id + título do pai (para o vínculo e a referência no corpo). A matriz
+  // de hierarquia (ALLOWED_PARENTS) valida NOVAS criações; sem pai é livre.
   let parent: { number: number; title: string; nodeId: string } | null = null;
   if (input.parentNumber) {
     const ref = await fetchIssueRef(config, input.parentNumber);
+    const parentType = typeFromTitle(ref.title);
+    if (!parentType) {
+      throw new HttpError(
+        400,
+        `A issue pai #${input.parentNumber} não tem um prefixo de tipo reconhecido.`,
+      );
+    }
+    if (!isAllowedParent(parentType, type)) {
+      throw new HttpError(
+        422,
+        `Hierarquia não permitida: ${parentType} não pode ser pai de ${type}.`,
+      );
+    }
     parent = { number: input.parentNumber, title: stripTypePrefix(ref.title), nodeId: ref.nodeId };
   }
 

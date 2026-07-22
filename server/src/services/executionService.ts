@@ -40,10 +40,11 @@ async function configFor(tenantId: string, repoId: string): Promise<GitHubConfig
   return configForRepository(await getRepositoryOr404(tenantId, repoId));
 }
 
-function typeOfTitle(title: string): 'story' | 'bug' | null {
+function typeOfTitle(title: string): 'story' | 'bug' | 'spike' | null {
   const m = title.match(/^\s*\[([A-Z]+)\]/);
   if (m?.[1] === 'STORY') return 'story';
   if (m?.[1] === 'BUG') return 'bug';
+  if (m?.[1] === 'SPIKE') return 'spike';
   return null;
 }
 
@@ -164,8 +165,8 @@ export async function returnToReadyForRepository(
 
 // ---- Vereditos de QA ----
 
-// Approve roteado por tipo: Story → Homologação (UAT); Bug → Done direto
-// (correção técnica não tem validação de negócio — decisão da spec).
+// Approve roteado por tipo: Story → Homologação (UAT); Bug e Spike → Done
+// direto (correção técnica/investigação não têm validação de negócio).
 export async function qaApproveForRepository(
   tenantId: string,
   repoId: string,
@@ -174,7 +175,7 @@ export async function qaApproveForRepository(
   const config = await configFor(tenantId, repoId);
   const ref = await fetchIssueRef(config, number);
   const type = typeOfTitle(ref.title);
-  if (!type) throw new HttpError(422, `A issue #${number} não é Story nem Bug.`);
+  if (!type) throw new HttpError(422, `A issue #${number} não é Story, Bug nem Spike.`);
   const target = type === 'story' ? ('UAT' as const) : ('Done' as const);
   await setStageForRepository(tenantId, repoId, number, target);
   invalidateSnapshot(tenantId, repoId);
@@ -337,7 +338,7 @@ export async function generateProgressSummary(
   const items = snapshot.items.filter(
     (i) =>
       i.milestone?.number === milestoneNumber &&
-      (i.labels.includes('[STORY]') || i.labels.includes('[BUG]')),
+      (i.labels.includes('[STORY]') || i.labels.includes('[BUG]') || i.labels.includes('[SPIKE]')),
   );
 
   // Idades por etapa (best-effort — enriquece o contexto do gargalo).
@@ -359,7 +360,7 @@ export async function generateProgressSummary(
     const days = age ? Math.floor((Date.now() - Date.parse(age.at)) / 86_400_000) : null;
     return [
       `#${i.number}`,
-      i.labels.includes('[BUG]') ? '[BUG]' : '[STORY]',
+      i.labels.includes('[BUG]') ? '[BUG]' : i.labels.includes('[SPIKE]') ? '[SPIKE]' : '[STORY]',
       i.title,
       `etapa=${i.stage ?? '—'}`,
       i.points != null ? `${i.points}pts` : null,
