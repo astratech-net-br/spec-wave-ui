@@ -1163,6 +1163,14 @@ export async function consumeInvite(code: string): Promise<InviteRecord | null> 
   return invite;
 }
 
+// Remove o espelho INVITE# do tenant convidante (pós-aceite). Idempotente.
+// Chamado pelo worker (o client escopado do convidado não alcança essa chave).
+export async function deleteInviteMirror(tenantId: string, code: string): Promise<void> {
+  await doc().send(
+    new DeleteCommand({ TableName: TABLE, Key: { PK: `TENANT#${tenantId}`, SK: `INVITE#${code}` } }),
+  );
+}
+
 export async function listInvites(tenantId: string): Promise<InviteRecord[]> {
   const out = await doc().send(
     new QueryCommand({

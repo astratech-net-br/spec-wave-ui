@@ -9,6 +9,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   consumeInvite,
+  deleteInviteMirror,
   deleteMember,
   getUser,
   listInvites,
@@ -23,7 +24,7 @@ import {
 import { planLimits } from '../lib/plans.ts';
 import { HttpError, NotFoundError } from '../lib/errors.ts';
 import { logger } from '../lib/logger.ts';
-import { requestContext } from '../lib/requestContext.ts';
+import { invokeAsync } from '../lib/lambdaInvoke.ts';
 
 const INVITE_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -63,31 +64,31 @@ export async function createInvite(
 // além do META — limpeza é tarefa administrativa futura).
 //
 // IMPORTANTE: esta é a ÚNICA operação legitimamente CROSS-TENANT do sistema —
-// a request roda com o claim do tenant do CONVIDADO, mas escreve chaves do
-// tenant CONVIDANTE (MEMBER# e o espelho INVITE#). Com o hardening LeadingKeys
-// ativo, o client escopado do request nega essas escritas (meio-aplicado: o
-// USER# muda e o MEMBER# não — bug observado em produção). Por isso o aceite
-// roda com o client DEFAULT; a autorização aqui é o próprio código de uso
-// único do convite.
+// a request roda com o claim do tenant do CONVIDADO. O modelo IAM (LeadingKeys)
+// já prevê o aceite: a role escopada permite `INVITECODE#*` (consumir) e
+// `USER#*` (reescrever o próprio vínculo). O que ela NUNCA alcança são as
+// chaves do tenant CONVIDANTE (MEMBER# e o espelho INVITE#) — e a Lambda da
+// API não tem acesso direto à tabela (só a role assumida). Essas escritas são
+// delegadas ao WORKER Lambda (grant total na tabela), invocado async; em dev
+// local (sem worker/hardening) rodam inline.
+export interface InviteMemberSyncPayload {
+  type: 'invite-member-sync';
+  tenantId: string; // tenant convidante
+  sub: string;
+  email: string;
+  role: 'member' | 'owner';
+  previousTenantId: string | null; // tenant órfão do signup (limpar espelho)
+  inviteCode: string; // espelho INVITE# a remover
+}
+
 export async function acceptInvite(
   code: string,
   user: { sub: string; email?: string },
 ): Promise<{ tenantId: string }> {
-  const store = requestContext.getStore();
-  if (store?.doc) {
-    return requestContext.run({ ...store, doc: undefined }, () => acceptInviteUnscoped(code, user));
-  }
-  return acceptInviteUnscoped(code, user);
-}
-
-async function acceptInviteUnscoped(
-  code: string,
-  user: { sub: string; email?: string },
-): Promise<{ tenantId: string }> {
-  const invite = await consumeInvite(code);
+  const invite = await consumeInvite(code); // INVITECODE#* — permitido no escopo
   if (!invite) throw new HttpError(403, 'Convite inválido, expirado ou já utilizado.');
 
-  const current = await getUser(user.sub);
+  const current = await getUser(user.sub); // USER#* — permitido no escopo
   if (current?.tenantId === invite.tenantId) return { tenantId: invite.tenantId }; // idempotente
 
   const now = new Date().toISOString();
@@ -98,19 +99,44 @@ async function acceptInviteUnscoped(
     role: invite.role,
     createdAt: current?.createdAt ?? now,
   });
-  await putMember({
-    sub: user.sub,
+
+  // Escritas cross-tenant (MEMBER# novo, MEMBER# antigo, espelho INVITE#).
+  const payload: InviteMemberSyncPayload = {
+    type: 'invite-member-sync',
     tenantId: invite.tenantId,
+    sub: user.sub,
     email: user.email ?? invite.email,
     role: invite.role,
-    createdAt: now,
-  });
-  // Remove o espelho de membro do tenant antigo (auto-criado no signup).
-  if (current && current.tenantId !== invite.tenantId) {
-    await deleteMember(current.tenantId, user.sub).catch(() => {});
+    previousTenantId: current && current.tenantId !== invite.tenantId ? current.tenantId : null,
+    inviteCode: code,
+  };
+  const workerFn = process.env.REFINE_WORKER_FUNCTION_NAME;
+  if (workerFn) {
+    await invokeAsync(workerFn, payload);
+  } else {
+    await runInviteMemberSync(payload);
   }
+
   logger.info(`Usuário ${user.sub} entrou no tenant ${invite.tenantId} como ${invite.role}.`);
   return { tenantId: invite.tenantId };
+}
+
+// Corpo do worker: roda com o client DEFAULT (fora do requestContext, com o
+// grant total do worker). Idempotente; nunca lança (falha vira log — o vínculo
+// USER# já foi reescrito e o membro reaparece num próximo aceite/reparo).
+export async function runInviteMemberSync(payload: InviteMemberSyncPayload): Promise<void> {
+  const { tenantId, sub, email, role, previousTenantId, inviteCode } = payload;
+  try {
+    await putMember({ sub, tenantId, email, role, createdAt: new Date().toISOString() });
+    if (previousTenantId) {
+      await deleteMember(previousTenantId, sub).catch(() => {});
+    }
+    await deleteInviteMirror(tenantId, inviteCode).catch(() => {});
+  } catch (err) {
+    logger.error(
+      `Sincronização de membro do convite falhou (sub ${sub}, tenant ${tenantId}): ${(err as Error).message}`,
+    );
+  }
 }
 
 export async function teamOverview(
