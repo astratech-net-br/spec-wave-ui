@@ -422,6 +422,7 @@
 .queue__level--epic { background: rgba(176, 138, 209, 0.16); color: var(--av-purple); }
 .queue__level--feature { background: var(--accent-soft); color: var(--accent-light); }
 .queue__level--story { background: rgba(111, 155, 209, 0.16); color: var(--av-blue); }
+.queue__level--rfc { background: rgba(210, 153, 34, 0.16); color: #d9b457; }
 
 .queue__title {
   color: var(--text);
@@ -748,6 +749,7 @@
 .proj-badge--task       { background: rgba(123, 191, 158, 0.16); color: var(--av-green); }
 .proj-badge--bug        { background: rgba(209, 111, 111, 0.16); color: #d99; }
 .proj-badge--spike      { background: rgba(230, 164, 132, 0.16); color: var(--accent-light); }
+.proj-badge--rfc        { background: rgba(210, 153, 34, 0.16); color: #d9b457; }
 
 /* Tabela */
 .proj-table-wrap {

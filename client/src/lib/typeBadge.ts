@@ -20,4 +20,5 @@ export const TYPE_BADGE: Record<WorkItemType, TypeBadgeInfo> = {
   task: { letter: 'T', label: 'Task' },
   bug: { letter: 'B', label: 'Bug' },
   spike: { letter: 'K', label: 'Spike' },
+  rfc: { letter: 'R', label: 'RFC' },
 };

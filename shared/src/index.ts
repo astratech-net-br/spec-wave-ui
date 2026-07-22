@@ -36,4 +36,11 @@ export type {
   SnapshotItem,
   ProjectSnapshot,
 } from './types';
-export { STAGE_NAMES, PRIORITIES, WORK_ITEM_TYPES, WORK_ITEM_RANK, isAllowedParent } from './types';
+export {
+  STAGE_NAMES,
+  PRIORITIES,
+  WORK_ITEM_TYPES,
+  WORK_ITEM_RANK,
+  ALLOWED_PARENTS,
+  isAllowedParent,
+} from './types';

@@ -69,7 +69,8 @@ export type WorkItemType =
   | 'story'
   | 'task'
   | 'bug'
-  | 'spike';
+  | 'spike'
+  | 'rfc';
 export const WORK_ITEM_TYPES: WorkItemType[] = [
   'initiative',
   'epic',
@@ -78,26 +79,42 @@ export const WORK_ITEM_TYPES: WorkItemType[] = [
   'task',
   'bug',
   'spike',
+  'rfc',
 ];
 
-// Posição na hierarquia (Initiative → Epic → Feature → Story → Task). Bug e
-// Spike são folhas flexíveis (mesmo rank de Task): podem ser filhos de qualquer
-// nível acima, nunca pais de itens da cadeia.
+// Profundidade típica na árvore — usada SÓ para ORDENAÇÃO de exibição. A
+// validação de hierarquia é a matriz ALLOWED_PARENTS abaixo. RFC tem o mesmo
+// nível de Story (é pai de Tasks).
 export const WORK_ITEM_RANK: Record<WorkItemType, number> = {
   initiative: 0,
   epic: 1,
   feature: 2,
   story: 3,
+  rfc: 3,
   task: 4,
   bug: 4,
   spike: 4,
 };
 
-// Regra de reparent: um item só pode ser filho de um tipo estritamente acima
-// dele na hierarquia (rank do pai < rank do filho). Ex.: Task não pode ter
-// Story como filha; Epic não pode ter Initiative como filha.
+// Matriz explícita de hierarquia (filho → pais aceitos). Vale para CRIAÇÕES e
+// REPARENTS novos — a leitura de dados legados nunca é bloqueada por ela.
+//   Bug   → rastreável à entrega (Feature ou Story); folha.
+//   Spike → investigação de um tema (Initiative/Epic/Feature); folha.
+//   RFC   → decisão/proposta sob Initiative/Epic; aceita Tasks como filhas.
+export const ALLOWED_PARENTS: Record<WorkItemType, WorkItemType[]> = {
+  initiative: [], // raiz
+  epic: ['initiative'],
+  feature: ['epic'],
+  story: ['feature'],
+  task: ['story', 'rfc'],
+  bug: ['feature', 'story'],
+  spike: ['initiative', 'epic', 'feature'],
+  rfc: ['initiative', 'epic'],
+};
+
+// Regra de reparent/criação: o pai precisa estar na matriz do tipo do filho.
 export function isAllowedParent(parentType: WorkItemType, childType: WorkItemType): boolean {
-  return WORK_ITEM_RANK[parentType] < WORK_ITEM_RANK[childType];
+  return ALLOWED_PARENTS[childType].includes(parentType);
 }
 
 // POST /api/repositories/:id/reparent — define o pai (sub-issue nativa) de um item.

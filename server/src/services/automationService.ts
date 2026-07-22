@@ -35,7 +35,7 @@ const inFlight = new Set<string>();
 const lastRunAt = new Map<string, number>();
 
 const isExecItem = (i: SnapshotItem): boolean =>
-  i.labels.includes('[STORY]') || i.labels.includes('[BUG]');
+  i.labels.includes('[STORY]') || i.labels.includes('[BUG]') || i.labels.includes('[SPIKE]');
 
 // "Review solicitado" num PR aberto (aproximação — ver cabeçalho).
 const reviewRequested = (i: SnapshotItem): { at: string } | null => {

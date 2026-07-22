@@ -104,7 +104,7 @@ export async function setFeatureMilestoneForRepository(
     (i) =>
       i.parentNumber === featureNumber &&
       i.state === 'open' &&
-      (i.labels.includes('[STORY]') || i.labels.includes('[BUG]')),
+      (i.labels.includes('[STORY]') || i.labels.includes('[BUG]') || i.labels.includes('[SPIKE]')),
   );
 
   const targets = [featureNumber, ...children.map((c) => c.number)];
