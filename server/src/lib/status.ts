@@ -43,7 +43,10 @@ export function normalizeStage(raw: string | null | undefined): StageName | null
   if (/done|conclu|finaliz|complete|shipped|entregue/.test(s)) return 'Done';
   if (/prioriz|priorit/.test(s)) return 'Priorizado';
   if (/ready|pronto/.test(s)) return 'Ready';
-  if (/dev|progress|andamento|doing|execucao|wip/.test(s)) return 'Development';
+  // "desenvolv" cobre o português — "desenvolvimento" NÃO contém "dev"
+  // (é d-e-s-e-n-v), então a coluna padrão "🚧 Desenvolvimento" nunca casava
+  // (bug observado em produção no pull do dev).
+  if (/desenvolv|dev|progress|andamento|doing|execucao|wip/.test(s)) return 'Development';
   if (/spec|especificacao/.test(s)) return 'Spec';
   if (/plan|planej/.test(s)) return 'Plan';
   if (/backlog|todo|a fazer|triage|ideia|idea/.test(s)) return 'Backlog';
