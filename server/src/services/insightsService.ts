@@ -5,14 +5,19 @@
 //
 // Atenção ao teto de 29 s do API Gateway: contexto enxuto + maxTokens baixo.
 
+import { randomUUID } from 'node:crypto';
 import type { ProjectSnapshot, SnapshotItem, StageName } from '@spec-flow/shared';
 import { STAGE_NAMES } from '@spec-flow/shared';
 import { generateText } from '../llm/openrouter.ts';
 import { emitMetric } from '../lib/metrics.ts';
 import { HttpError } from '../lib/errors.ts';
+import { logger } from '../lib/logger.ts';
+import { invokeAsync } from '../lib/lambdaInvoke.ts';
+import { putRefineJob, updateRefineJob } from '../db/dynamo.ts';
 import { consumeRefineOrThrow } from './quotaService.ts';
 import { tenantOpenrouterKey } from './settingsService.ts';
 import { loadSnapshotForRepository } from './snapshotService.ts';
+import { getRepositoryOr404 } from './repositoryService.ts';
 
 export type InsightScope = 'pm-progress' | 'tech-insights' | 'dev-daily' | 'brainstorm';
 
@@ -106,6 +111,7 @@ const SCOPE_PROMPTS: Record<InsightScope, { system: string; user: string; maxTok
 };
 
 // Gera o insight/summary de um escopo. `topic` (brainstorm) direciona o tema.
+// NÃO consome cota (consumida no enqueue do job) — é o corpo do worker.
 export async function generateInsight(
   tenantId: string,
   repoId: string,
@@ -116,10 +122,7 @@ export async function generateInsight(
   if (!prompt) throw new HttpError(400, `Escopo de insight inválido: "${scope}".`);
 
   const snapshot = await loadSnapshotForRepository(tenantId, repoId);
-
-  // Mesma política de cota do refine: tenant com chave própria não consome.
   const tenantKey = await tenantOpenrouterKey(tenantId);
-  if (!tenantKey) await consumeRefineOrThrow(tenantId);
 
   const user = [
     prompt.user,
@@ -138,6 +141,67 @@ export async function generateInsight(
     });
   } finally {
     emitMetric('InsightDurationMs', Date.now() - startedAt, 'Milliseconds', { scope });
+  }
+}
+
+// ---------- Job assíncrono (202 + polling) ----------
+// A geração pode passar do teto de 29 s do API Gateway (observado no "Resumo
+// do projeto" em repositórios grandes) — mesmo padrão do refine: enqueue do
+// job, worker Lambda roda a LLM (até 15 min) e o client faz polling.
+
+export interface InsightJobPayload {
+  type: 'insight';
+  tenantId: string;
+  repoId: string;
+  scope: InsightScope;
+  topic?: string;
+  jobId: string;
+}
+
+export async function startInsightJob(
+  tenantId: string,
+  repoId: string,
+  scope: InsightScope,
+  topic?: string,
+): Promise<{ jobId: string }> {
+  await getRepositoryOr404(tenantId, repoId); // 404 se o repo não for do tenant
+
+  // Cota consumida ANTES do enqueue (429 imediato); chave própria não consome.
+  const tenantKey = await tenantOpenrouterKey(tenantId);
+  if (!tenantKey) await consumeRefineOrThrow(tenantId);
+
+  const jobId = randomUUID();
+  await putRefineJob({
+    tenantId,
+    jobId,
+    status: 'pending',
+    kind: 'insight',
+    createdAt: new Date().toISOString(),
+    ttl: Math.floor(Date.now() / 1000) + 3600, // 1h
+  });
+
+  const payload: InsightJobPayload = { type: 'insight', tenantId, repoId, scope, topic, jobId };
+  const workerFn = process.env.REFINE_WORKER_FUNCTION_NAME;
+  if (workerFn) {
+    await invokeAsync(workerFn, payload); // produção: worker sem teto de 29s
+  } else {
+    await runInsightJob(payload); // dev/local: inline
+  }
+  return { jobId };
+}
+
+// Corpo do worker: nunca lança — erros vão para o job (status=error).
+export async function runInsightJob(payload: InsightJobPayload): Promise<void> {
+  const { tenantId, repoId, scope, topic, jobId } = payload;
+  try {
+    const content = await generateInsight(tenantId, repoId, scope, topic);
+    await updateRefineJob(tenantId, jobId, { status: 'done', content });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Falha ao gerar o insight.';
+    logger.error(`Insight job ${jobId} (${scope}, repo ${repoId}) falhou: ${message}`);
+    await updateRefineJob(tenantId, jobId, { status: 'error', error: message }).catch(() => {
+      /* job pode ter expirado */
+    });
   }
 }
 

@@ -824,6 +824,12 @@ export async function setStoryMilestone(
 
 export type InsightScope = 'pm-progress' | 'tech-insights' | 'dev-daily' | 'brainstorm';
 
+// Assíncrono (a geração pode passar do teto de 29s do API Gateway): o POST
+// devolve 202 { jobId } e o resultado chega por polling — mesma mecânica do
+// refine. A assinatura continua Promise<string> para os consumidores.
+const INSIGHT_POLL_MS = 2_500;
+const INSIGHT_POLL_MAX_MS = 5 * 60_000;
+
 export async function fetchInsight(
   repoId: string,
   scope: InsightScope,
@@ -839,9 +845,25 @@ export async function fetchInsight(
     },
     signal,
   );
-  const content = (json as { content?: unknown })?.content;
-  if (typeof content !== 'string') {
+  const jobId = (json as { jobId?: unknown })?.jobId;
+  if (typeof jobId !== 'string') {
+    // Compat: servidor antigo (síncrono) devolve { content } direto.
+    const content = (json as { content?: unknown })?.content;
+    if (typeof content === 'string') return content;
     throw new Error('Resposta da API em formato inesperado.');
   }
-  return content;
+
+  const deadline = Date.now() + INSIGHT_POLL_MAX_MS;
+  for (;;) {
+    if (signal?.aborted) throw new Error('Geração cancelada.');
+    await new Promise((r) => setTimeout(r, INSIGHT_POLL_MS));
+    const job = (await request(
+      `/api/repositories/${repoId}/ai/summary/${jobId}`,
+      { method: 'GET' },
+      signal,
+    )) as { status: string; content?: string; error?: string };
+    if (job.status === 'done' && typeof job.content === 'string') return job.content;
+    if (job.status === 'error') throw new Error(job.error ?? 'Falha ao gerar o insight.');
+    if (Date.now() > deadline) throw new Error('Tempo esgotado aguardando a geração.');
+  }
 }

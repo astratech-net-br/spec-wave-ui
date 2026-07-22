@@ -78,7 +78,7 @@ import {
 } from '../controllers/ExecutionController.ts';
 import { getRepositorySnapshot } from '../controllers/SnapshotController.ts';
 import { getDiscussions, postDiscussion } from '../controllers/DiscussionController.ts';
-import { postRepositoryInsight } from '../controllers/InsightsController.ts';
+import { getInsightJobStatus, postRepositoryInsight } from '../controllers/InsightsController.ts';
 import {
   getFeaturePlanBlob,
   getFeaturePlanMeta,
@@ -446,3 +446,5 @@ repositoryRoutes.post(
 // (pm-progress | tech-insights | dev-daily | brainstorm). Consome cota de
 // refine, salvo tenant com chave OpenRouter própria.
 repositoryRoutes.post('/repositories/:id/ai/summary', postRepositoryInsight);
+// Polling do job de insight (202 + jobId — a geração roda no worker Lambda).
+repositoryRoutes.get('/repositories/:id/ai/summary/:jobId', getInsightJobStatus);
