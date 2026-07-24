@@ -82,7 +82,10 @@
   },
   "ai": {
     "provider": "openrouter",
-    "model": "deepseek/deepseek-chat-v3.1"
+    "model": "anthropic/claude-sonnet-5",
+    "models": {
+      "decompose": "anthropic/claude-opus-4.8"
+    }
   },
   "initializedAt": "2026-07-10T19:55:16.147Z",
   "specKit": {
