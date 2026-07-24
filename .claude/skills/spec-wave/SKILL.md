@@ -1,7 +1,7 @@
 ---
 name: spec-wave
 description: "Use when the user wants to set up a spec-driven GitHub workflow, create a Feature issue, generate spec.md or plan.md, decompose a Feature into Stories/Tasks, write RFC documentation, or audit and fix a Pull Request. Implements the RFC-001 workflow with GitHub Projects v2, labels, and AI-powered GitHub Actions."
-argument-hint: "[info|setup|update|issue|feature|spec|plan|ready|decompose|implement|uninstall|rfc|fix-pr] [target]"
+argument-hint: "[info|setup|update|doctor|issue|feature|spec|plan|ready|decompose|order|implement|task|story|uninstall|rfc|fix-pr] [target]"
 user-invocable: true
 allowed-tools:
   - Bash(npx @spec-wave/cli *)
@@ -21,7 +21,7 @@ allowed-tools:
   - Agent
 ---
 
-> ⚙️ **spec-wave skill v0.5.11** — esta skill é uma cópia estática. Se `npx @spec-wave/cli --version` indicar uma versão maior, ela está desatualizada: rode `npx @spec-wave/cli update` (atualiza só o que mudou) ou `npx @spec-wave/cli install-skill --force` (só a skill).
+> ⚙️ **spec-wave skill v0.7.0** — esta skill é uma cópia estática. Se `npx @spec-wave/cli --version` indicar uma versão maior, ela está desatualizada: rode `npx @spec-wave/cli update` (atualiza só o que mudou) ou `npx @spec-wave/cli install-skill --force` (só a skill).
 
 # spec-wave Skill
 
@@ -83,6 +83,10 @@ Labels de gatilho:
 - `spec-wave:plan` → dispara `generate-plan.yml` → gera `plan.md` (plano técnico, a partir da spec)
 - `spec-wave:ready` → dispara `validate.yml` → valida ambos os arquivos
 - `spec-wave:decompose` → dispara `decompose.yml` → gera Stories e Tasks
+
+Labels de **estado** (gravadas pelas automações — **não** são gatilhos, não as adicione por conta própria):
+- `spec-wave:critique-failed` → a crítica adversarial apontou contradições **graves** nos documentos; **bloqueia** o `spec-wave:ready` até ser removida (veja *Crítica adversarial* abaixo)
+- `spec-wave:decomposed` → a Feature/RFC já foi decomposta; o `decompose` pula silenciosamente enquanto ela existir (veja *Guard de idempotência* abaixo)
 
 A etapa **🚧 Desenvolvimento** é coberta pelo comando **local** `npx @spec-wave/cli implement <número>` (não é uma label/Action): lê uma Story ou Task e aciona o spec-kit para implementar. Veja `/spec-wave implement`.
 
@@ -160,6 +164,10 @@ Mesmas flags do `issue` (exceto `--type`, fixo em `feature`). Mantido para o flu
 | `--issue-number <n>` | string (obrigatório) | Número da issue no GitHub. |
 
 > ⚠️ Esses quatro comandos são executados pelos **GitHub Actions** (disparados por labels), **não** pela skill diretamente. Veja a *Regra fundamental*: para gerar plan/spec/decompor, adicione a **label** correspondente — não rode o comando à mão (a não ser para debug local).
+>
+> **Por tipo de issue:**
+> - `generate-spec` / `generate-plan` → **apenas Features**. Para **Spike, RFC e Bug** a geração é **pulada** (o Action remove a label e comenta) — esses tipos não usam spec/plan.
+> - `decompose` → **Feature** (gera Stories + Tasks) e **RFC** (gera **Tasks** diretamente, sem Stories). Para outros tipos, o Action recusa.
 
 ### `@spec-wave/cli implement` — aciona o spec-kit para uma Story ou Task (comando LOCAL)
 | Flag/Arg | Tipo | Descrição |
@@ -168,7 +176,80 @@ Mesmas flags do `issue` (exceto `--type`, fixo em `feature`). Mantido para o flu
 | `--feature-dir <path>` | string | Caminho `docs/features/<slug>` para anexar `spec.md`/`plan.md` como contexto (sobrescreve a resolução automática). |
 | `--dry-run` | flag | Monta o contexto e imprime o comando do spec-kit **sem executar**. |
 
-> Diferente dos quatro acima, `implement` roda **localmente** (lê `.spec-wave.json`, como `issue`), não por Action. Detecta o tipo da issue: **Story** → coleta todas as Tasks (sub-issues) e aciona o spec-kit uma única vez; **Task** → só aquela task. Monta o contexto em `.spec-wave/implement-<n>.md` e chama o comando configurado em `specKit.command` (no `.spec-wave.json`) ou na env `SPEC_WAVE_IMPLEMENT_CMD`. Placeholders disponíveis no template: `{tasksFile} {specFile} {planFile} {issue} {type} {title}`. Se nada estiver configurado, ele apenas monta o contexto e mostra como configurar (não executa). O contexto inclui instruções para o agente implementar as Tasks **sequencialmente, uma por vez**, usando o campo **Status** (Todo → In Progress → Done) para o progresso *dentro* da Etapa 🚧 Desenvolvimento — sem trocar a Etapa das tasks (nunca duas com Status "In Progress" ao mesmo tempo). **Ao concluir toda a Story**: fazer o commit, abrir o PR e **avançar a Etapa** da **Story e de todas as suas Tasks** para **👀 Code Review** (Status → Todo). A **Feature só avança** para Code Review quando **TODAS as suas Stories** já estiverem em Code Review — enquanto houver Story pendente, a Feature fica em 🚧 Desenvolvimento. Etapa só avança (nunca volta); Status mede o progresso dentro da etapa.
+> Diferente dos quatro acima, `implement` roda **localmente** (lê `.spec-wave.json`, como `issue`), não por Action. Detecta o tipo da issue: **Story** → coleta todas as Tasks (sub-issues) e aciona o spec-kit uma única vez; **Task** → só aquela task. Monta o contexto em `.spec-wave/implement-<n>.md` e chama o comando configurado em `specKit.command` (no `.spec-wave.json`) ou na env `SPEC_WAVE_IMPLEMENT_CMD`. Placeholders disponíveis no template: `{tasksFile} {specFile} {planFile} {issue} {type} {title}`. Se nada estiver configurado, ele apenas monta o contexto e mostra como configurar (não executa). O contexto inclui os **comentários da issue**, um **digest do código recente** e um **aviso de dependências pendentes** quando a issue depende (linha `Depende de: #N` ou relação nativa *blocked by*) de outra que ainda não foi concluída — nesse caso, confirme com o usuário antes de seguir. Inclui também instruções para o agente implementar as Tasks **sequencialmente, uma por vez** (nunca duas com Status "In Progress" ao mesmo tempo): cada Task usa o **Status** (In Progress) *dentro* da Etapa 🚧 Desenvolvimento e, **ao concluir, avança para a Etapa 🎉 Done com Status Done**. **Ao concluir toda a Story**: fazer o commit, abrir o PR e **avançar a Etapa da Story para 👀 Code Review** (Status → Todo) — as Tasks já estão em 🎉 Done. A **Feature só avança** para Code Review quando **TODAS as suas Stories** já estiverem em Code Review — enquanto houver Story pendente, a Feature fica em 🚧 Desenvolvimento. Etapa só avança (nunca volta); Status mede o progresso dentro da etapa.
+
+### `@spec-wave/cli doctor` — preflight de auth e configuração (comando LOCAL)
+Sem flags. Roda um checklist de diagnóstico no repositório atual: token GitHub (e a fonte dele), escopos (`repo`, `project`, `workflow` — com degradação para checks funcionais em fine-grained PATs), conta ativa do `gh` vs. owner, `.spec-wave.json` (campos e sincronia com o Project real), acesso ao repositório, configuração de IA (provider/modelo/`ai.models` + secrets do Actions) e presença dos workflows.
+
+> Saída: `✓` ok, `✗` problema confirmado, `!` não verificável (best-effort — falha de rede nunca derruba o doctor). **Exit 1** se houver algum `✗`. **Quando rodar:** no início de uma sessão de trabalho, ou sempre que aparecer um erro estranho (ex.: **404 ao criar issues** — causa típica: token sem acesso ao repo/org, que o doctor aponta). É o primeiro passo de troubleshooting — prefira-o a depurar `gh api` na mão.
+
+### `@spec-wave/cli order <feature>` — ordem de execução das Stories (comando LOCAL)
+| Flag/Arg | Tipo | Descrição |
+|----------|------|-----------|
+| `<feature>` | string (obrigatório) | Número da issue da **Feature**, ex.: `12` ou `#12`. Argumento posicional. |
+
+> Lista as Stories da Feature em **ordem topológica** pelas dependências (linha `Depende de: #N` no corpo + relação nativa *blocked by*, mescladas), com a Etapa atual de cada uma no board. Avisa sobre **ciclos de dependência** (essas Stories ficam fora da ordem — corrija as linhas `Depende de`) e sobre **dependências fora de ordem** (Story já em Desenvolvimento+ dependendo de outra que não está Done). Use antes de escolher qual Story implementar.
+
+### `@spec-wave/cli task <start|done> <n>` — transições de Task no board (comando LOCAL)
+| Flag/Arg | Tipo | Descrição |
+|----------|------|-----------|
+| `<action>` | string (obrigatório) | `start` (Etapa 🚧 Desenvolvimento + Status In Progress) ou `done` (Etapa 🎉 Done + Status Done). |
+| `<n>` | string (obrigatório) | Número da issue da **Task**, ex.: `12` ou `#12`. |
+
+> **Prefira este comando a mexer no board via GraphQL/`gh` manual** — ele embute as regras do fluxo: a **Etapa nunca retrocede** (se já estiver adiante, só o Status é ajustado) e **uma única Task "In Progress" por vez** dentro da mesma Story (`start` recusa, apontando a Task em andamento, se houver outra irmã em In Progress).
+
+### `@spec-wave/cli story review <n>` — move a Story para Code Review (comando LOCAL)
+| Flag/Arg | Tipo | Descrição |
+|----------|------|-----------|
+| `<action>` | string (obrigatório) | `review` (única ação hoje). |
+| `<n>` | string (obrigatório) | Número da issue da **Story**, ex.: `12` ou `#12`. |
+
+> Avança a Story para a Etapa **👀 Code Review** com Status **Todo** (o Status reinicia ao trocar de etapa). Mesma regra do `task`: a **Etapa nunca retrocede** — se a Story já estiver em Code Review ou adiante, o comando apenas informa a Etapa atual. Use no fim do `implement` de uma Story, em vez de mutações GraphQL manuais.
+
+---
+
+## Crítica adversarial, idempotência e dependências (v0.7)
+
+### Crítica adversarial (comentário 🔎)
+
+Após o `generate-plan` e **antes** da criação de issues no `decompose`, um segundo agente de IA critica os documentos procurando contradições, lacunas e riscos. O resultado vira um comentário **🔎 Crítica adversarial (spec-wave)** na issue.
+
+- Findings **graves** → o Action aplica a label **`spec-wave:critique-failed`**, que **bloqueia o `spec-wave:ready`** (o `validate` falha enquanto ela existir).
+- **Fluxo de resolução:** (1) leia o comentário 🔎 na issue; (2) corrija `spec.md`/`plan.md` (regenere com as labels ou edite e commite); (3) remova a label: `gh issue edit <n> --remove-label "spec-wave:critique-failed"`; (4) re-aplique `spec-wave:ready` para validar de novo.
+- Findings leves não bloqueiam — trate-os como revisão de qualidade.
+
+### Guard de idempotência do decompose (`spec-wave:decomposed`)
+
+O evento `labeled` pode redisparar (re-add da label, retry de runner). Para não duplicar Stories/Tasks, o `decompose` **pula** quando a issue já tem a label **`spec-wave:decomposed`** ou já tem sub-issues do tipo-alvo (`[STORY]` para Feature, `[TASK]` para RFC). Ao concluir com sucesso, o Action grava a label. Os workflows ainda usam `concurrency` por issue para serializar runs simultâneos.
+
+**Para forçar um re-decompose:** remova a label (`gh issue edit <n> --remove-label "spec-wave:decomposed"`), **apague/feche as sub-issues antigas** (senão a detecção por sub-issues pula de novo) e re-adicione `spec-wave:decompose`.
+
+### Dependências entre Stories (`Depende de: #N`)
+
+O `decompose` grava nas Stories geradas uma linha **`Depende de: #N, #M`** no corpo e cria a relação nativa *blocked by* do GitHub. Essas dependências alimentam:
+- `spec-wave order <feature>` → ordem topológica de execução;
+- `spec-wave implement <n>` → **aviso** no contexto quando uma dependência ainda não está concluída (confirme com o usuário antes de implementar fora de ordem).
+
+Não apague a linha `Depende de:` ao editar o corpo de uma Story; para mudar dependências, edite a linha (e/ou a relação *blocked by*).
+
+### Modelo de IA por ação (`ai.models` no `.spec-wave.json`)
+
+Cada ação de IA (`spec`, `plan`, `decompose`, `critique`) pode usar um modelo próprio, com fallback em `ai.model` e depois no default do provider:
+
+```json
+{
+  "ai": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "models": {
+      "plan": "claude-opus-4-1",
+      "critique": "claude-opus-4-1"
+    }
+  }
+}
+```
+
+Edite o bloco `ai` no `.spec-wave.json` (e commite) — o `doctor` mostra o provider, o modelo e os overrides de `ai.models` resolvidos.
 
 ---
 
@@ -234,6 +315,8 @@ Crie um work item tipado (Initiative/Epic/Feature/Story/Task/...) já adicionado
 
 **Hierarquia típica:** Initiative → Epic → Feature → Story → Task. A **Initiative** é o nó raiz e agrupa Epics. Use `--parent <n>` para criar como sub-issue do nível acima (ex.: um Epic filho de uma Initiative, ou uma Story filha de uma Feature). O GitHub mostra o parent na issue filha e vice-versa; a CLI ainda grava `Parent: #N` no corpo.
 
+> **Spike é movido manualmente:** o spec-wave **nunca** avança a Etapa de um Spike automaticamente (nem no `implement`, nem nas Actions de Code Review/QA). O Spike entra no board em 📥 Backlog e o **usuário** o move à mão pelas etapas. Não mova a Etapa de um Spike por conta própria — a não ser que o usuário peça explicitamente.
+
 **Passos:**
 1. Pergunte ao usuário: tipo (initiative/epic/feature/story/task/...), título (sem prefixo), descrição e se há uma issue **pai** (número). **Prioridade e área são opcionais**: só as inclua se o usuário pedir explicitamente. **Nunca atribua uma prioridade por conta própria** — se o usuário não informou, **omita `--priority`** e a prioridade fica `null` (sem prioridade) no board.
 2. Execute o comando com os parâmetros coletados (inclua **apenas** as flags que o usuário forneceu):
@@ -269,14 +352,17 @@ Remove a configuração do spec-wave do repositório (labels, arquivos `.github`
 
 Inicia a geração da **especificação funcional** para uma Feature. É o **primeiro** passo do ciclo de documentos (antes do plano técnico).
 
+> **Apenas Features.** spec/plan **não** são gerados para **Spike, RFC ou Bug** — se a label for adicionada a um desses, o Action pula a geração, remove a label e comenta. Não use `/spec-wave spec|plan` nesses tipos.
+
 **Passos:**
-1. Adicione a label de gatilho:
+1. Confirme que a issue é uma **Feature** (spec/plan não se aplicam a Spike/RFC/Bug).
+2. Adicione a label de gatilho:
    ```bash
    gh issue edit <número> --add-label "spec-wave:spec"
    ```
-2. Informe: "Label `spec-wave:spec` adicionada. O GitHub Action `generate-spec.yml` irá gerar o `spec.md` automaticamente."
-3. Após a conclusão, ofereça revisar o spec.md gerado em `docs/features/<slug>/spec.md`.
-4. Próximo passo: gerar o plano técnico — mova para **📋 Plan** e use `/spec-wave plan <número>`.
+3. Informe: "Label `spec-wave:spec` adicionada. O GitHub Action `generate-spec.yml` irá gerar o `spec.md` automaticamente."
+4. Após a conclusão, ofereça revisar o spec.md gerado em `docs/features/<slug>/spec.md`.
+5. Próximo passo: gerar o plano técnico — mova para **📋 Plan** e use `/spec-wave plan <número>`.
 
 ---
 
@@ -366,22 +452,28 @@ Valida que spec.md e plan.md estão completos e a Feature pode avançar.
    ```
 2. Informe: "Validação iniciada. O workflow verificará se spec.md e plan.md contêm todas as seções obrigatórias."
 3. Se a validação falhar, o workflow comentará os problemas na issue e adicionará automaticamente `spec-wave:spec`. Informe o usuário para corrigir e tentar novamente.
-4. Se passar, oriente: "Feature validada! Mova o card para **✅ Ready** e depois para **📋 Backlog Técnico** para iniciar a decomposição."
+4. **Se a issue tiver a label `spec-wave:critique-failed`**, a validação falha de imediato: a crítica adversarial apontou contradições graves (comentário 🔎 na issue). Siga o fluxo de resolução da seção *Crítica adversarial*: corrigir os documentos → remover a label → re-aplicar `spec-wave:ready`.
+5. Se passar, oriente: "Feature validada! Mova o card para **✅ Ready** e depois para **📋 Backlog Técnico** para iniciar a decomposição."
 
 ---
 
 ### `/spec-wave decompose <número-da-issue>`
 
-Decompõe uma Feature em Stories e Tasks automaticamente.
+Decompõe automaticamente. Aplica-se a **dois tipos**:
+- **Feature** → gera **Stories** (cada uma com suas **Tasks**), a partir de `spec.md` + `plan.md`.
+- **RFC** → gera **Tasks diretamente** (sem Stories), a partir da descrição do RFC.
+
+Para qualquer outro tipo (Spike, Bug, Story, Task, …) o Action **recusa** e comenta.
 
 **Passos:**
-1. Confirme que a Feature está em **✅ Ready** (spec.md e plan.md validados)
+1. Para **Feature**: confirme que está em **✅ Ready** (spec.md e plan.md validados). Para **RFC**: basta a descrição estar completa (RFC não usa spec/plan).
 2. Adicione a label de decomposição:
    ```bash
    gh issue edit <número> --add-label "spec-wave:decompose"
    ```
-3. Informe: "Decomposição iniciada. O workflow gerará Stories e Tasks baseados em spec.md e plan.md."
-4. Após a conclusão, as issues filhas aparecerão como comentário na Feature pai.
+3. Informe: "Decomposição iniciada — Feature gera Stories+Tasks; RFC gera Tasks."
+4. Após a conclusão, as issues filhas aparecerão como comentário na issue pai, junto com o comentário 🔎 da crítica adversarial. As Stories geradas trazem a linha `Depende de: #N` (+ relação *blocked by*) — use `npx @spec-wave/cli order <número>` para ver a ordem de execução.
+5. A issue recebe a label `spec-wave:decomposed` (guard de idempotência): rodar de novo **não** duplica as issues. Para forçar um re-decompose, siga a seção *Guard de idempotência*.
 
 ---
 
@@ -398,7 +490,7 @@ Aciona o spec-kit para implementar uma **Story** (todas as suas Tasks) ou uma **
    npx @spec-wave/cli implement <número> --dry-run
    ```
 3. Mostre ao usuário o contexto montado em `.spec-wave/implement-<número>.md` e o comando. Esse arquivo contém as **instruções de execução sequencial**: implemente as Tasks **uma por vez** — mova a task para **🚧 Desenvolvimento** só ao iniciá-la e para **🎉 Done** ao concluí-la, antes de passar para a próxima. **Nunca** coloque várias tasks em "in progress" ao mesmo tempo.
-4. **Se você (agente) for implementar diretamente** (sem `specKit.command`): siga o contexto task por task. Para cada task, use o campo **Status** (In Progress ao começar → Done ao concluir) *dentro* da Etapa 🚧 Desenvolvimento — não troque a Etapa da task. Atualize os campos via `gh`. **Ao concluir toda a Story**: faça o commit, abra o PR e **avance a Etapa** da **Story e de todas as suas Tasks** para **👀 Code Review** (Status → Todo). A **Feature só avança** quando **TODAS as suas Stories** já estiverem em Code Review — se houver Story pendente, deixe a Feature em 🚧 Desenvolvimento. Lembre: Etapa só avança (nunca volta); Status é o progresso dentro da etapa.
+4. **Se você (agente) for implementar diretamente** (sem `specKit.command`): siga o contexto task por task. Para cada task: `npx @spec-wave/cli task start <n>` ao iniciar (Etapa 🚧 Desenvolvimento + Status In Progress) e `npx @spec-wave/cli task done <n>` ao concluir (Etapa 🎉 Done + Status Done) — **prefira esses comandos a mutações GraphQL/`gh` manuais**: eles embutem as regras do board (Etapa nunca retrocede; uma task In Progress por vez). Se o contexto trouxer **aviso de dependência pendente** (a issue depende de outra não concluída), confirme com o usuário antes de seguir. **Ao concluir toda a Story**: faça o commit, abra o PR e mova a Story com `npx @spec-wave/cli story review <n>` (Etapa 👀 Code Review, Status → Todo) — as Tasks já estão em 🎉 Done. A **Feature só avança** quando **TODAS as suas Stories** já estiverem em Code Review — se houver Story pendente, deixe a Feature em 🚧 Desenvolvimento. Lembre: Etapa só avança (nunca volta); Status é o progresso dentro da etapa.
 5. Se o usuário aprovar e o spec-kit estiver configurado, rode sem `--dry-run`:
    ```bash
    npx @spec-wave/cli implement <número>
@@ -406,7 +498,7 @@ Aciona o spec-kit para implementar uma **Story** (todas as suas Tasks) ou uma **
    - Se o spec-kit **não** estiver configurado, o comando só monta o contexto e mostra como configurar (`specKit.command` / `SPEC_WAVE_IMPLEMENT_CMD`). Ajude o usuário a definir o template (placeholders: `{tasksFile} {specFile} {planFile} {issue} {type} {title}`).
    - Use `--feature-dir docs/features/<slug>` se a resolução automática da Feature falhar (a skill avisa com warning) e você quiser anexar `spec.md`/`plan.md` como contexto.
 6. Se a issue **não** for Story nem Task (ex.: Feature, Bug), o comando recusa — oriente o usuário: Features se decompõem (`/spec-wave decompose`); implemente as Stories/Tasks resultantes.
-7. Ao final (Story + Tasks em **👀 Code Review**; a Feature só vai para Code Review quando a última Story concluir): confirme o resultado com o usuário e oriente a revisão do PR.
+7. Ao final (Tasks em **🎉 Done**, Story em **👀 Code Review**; a Feature só vai para Code Review quando a última Story concluir): confirme o resultado com o usuário e oriente a revisão do PR.
 
 ---
 
